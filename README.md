@@ -163,14 +163,6 @@ reach your actors. Once public:
 - From MayaSpace: `/fediverse` → look up `someone@some-server` → **Follow** —
   their new posts mirror into `/fediverse` and likes flow back.
 
-## Docker guide
-
-```
-cp .env.example .env
-nano .env
-docker compose up -d --build
-```
-
 ## License
 
 SPL-R5
