@@ -19,6 +19,7 @@ import {
   Note,
   Person,
   PUBLIC_COLLECTION,
+  Service,
   Tombstone,
   Undo,
   Update,
@@ -48,11 +49,35 @@ function toInstant(iso: string): Temporal.Instant {
 
 // ── actor dispatcher ─────────────────────────────────────────────────────────
 
+/**
+ * The instance service actor ("MayaSpace") signs all outbound document
+ * fetches; servers with authorized fetch dereference its keyId to verify
+ * signatures, so it must be publicly served like any other actor.
+ */
+const SERVICE_ACTOR_HANDLE = "mayaspace";
+
 const actorDispatcher = async (
   ctx: RequestContext<unknown>,
   identifier: string,
-): Promise<Person | Tombstone | null> => {
+): Promise<Person | Service | Tombstone | null> => {
   const handle = decodeURIComponent(identifier).toLowerCase();
+
+  if (handle === SERVICE_ACTOR_HANDLE) {
+    // Touch the key pairs so they exist before anyone signs/verifies.
+    await getActorKeyPairs(handle);
+    const actorId = ctx.getActorUri(handle);
+    return new Service({
+      id: actorId,
+      name: config.siteName,
+      preferredUsername: "MayaSpace",
+      inbox: ctx.getInboxUri(handle),
+      outbox: ctx.getOutboxUri(handle),
+      url: new URL(config.mayaUrl),
+      manuallyApprovesFollowers: true,
+      summary: `Official service actor for ${config.siteName} (${config.mayaUrl}).`,
+    });
+  }
+
   const user = await store.getUser(handle);
   if (!user || user.suspended) return null;
 

@@ -4,6 +4,7 @@
  */
 import { config } from "../config.js";
 import { appLog } from "../logger.js";
+import { SERVICE_ACTOR_HANDLE } from "../fediverse/remote.js";
 import { store } from "../store.js";
 import type { Role, UserRecord } from "../types.js";
 import { HANDLE_RE, escapeHtml, hashPassword, isoNow, newId, verifyPassword } from "../util.js";
@@ -29,6 +30,9 @@ export async function registerUser(input: {
       ok: false,
       error: "Handle must be 3-20 characters: lowercase letters, numbers, underscores.",
     };
+  }
+  if (handle === SERVICE_ACTOR_HANDLE) {
+    return { ok: false, error: "That handle is reserved." };
   }
   if (await store.handleExists(handle)) {
     return { ok: false, error: "That handle is already taken." };

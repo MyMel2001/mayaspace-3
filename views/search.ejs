@@ -12,8 +12,8 @@
 
   <% if (q !== "") { %>
     <section class="panel">
-      <h2 class="panel-title">Results for "<%= q %>" (<%= users.length %>)</h2>
-      <% if (users.length === 0) { %><p class="muted">Nobody found. Maybe they haven't joined yet!</p><% } %>
+      <h2 class="panel-title">Results for "<%= q %>" (<%= users.length + remoteActors.length %>)</h2>
+      <% if (users.length === 0 && remoteActors.length === 0) { %><p class="muted">Nobody found. Maybe they haven't joined yet!</p><% } %>
       <% for (const u of users) { %>
         <div class="friend-row">
           <a href="/u/<%= u.handle %>" class="search-result">
@@ -26,6 +26,20 @@
             <form method="post" action="/friends/request" class="inline-form">
               <input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="handle" value="<%= u.handle %>">
               <button type="submit" class="btn">+ Add friend</button>
+            </form>
+          <% } %>
+        </div>
+      <% } %>
+      <% for (const r of remoteActors) { %>
+        <div class="friend-row">
+          <a href="/fediverse/actor?actor=<%= encodeURIComponent(r.actorId) %>" class="search-result">
+            <% if (r.avatarUrl) { %><img src="<%= r.avatarUrl %>" alt="" width="36" height="36"><% } else { %><span class="avatar-fallback avatar-sm">🌐</span><% } %>
+            <span><%= r.name %> <span class="muted">@<%= r.handle %></span> <span class="badge badge-mod">fediverse</span></span>
+          </a>
+          <% if (user) { %>
+            <form method="post" action="/fediverse/follow" class="inline-form">
+              <input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="actor" value="<%= r.actorId %>">
+              <button type="submit" class="btn">+ Follow</button>
             </form>
           <% } %>
         </div>

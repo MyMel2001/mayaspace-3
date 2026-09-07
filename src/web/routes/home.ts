@@ -5,6 +5,9 @@ import { Router, type Request, type Response } from "express";
 import { config } from "../../config.js";
 import { store } from "../../store.js";
 import { buildPostViews } from "../../services/render.js";
+import { getFederation } from "../../app.js";
+import { resolveRemoteActor } from "../../fediverse/remote.js";
+import { parseRemoteHandle } from "../../util.js";
 import { commonLocals } from "../helpers.js";
 
 const router = Router();
@@ -43,11 +46,39 @@ router.get("/search", async (req: Request, res: Response) => {
     avatarUrl: u.avatar ? `/media/${u.avatar}` : null,
     role: u.role,
   }));
+
+  // Fediverse handles (user@host / @user@host) or profile URLs resolve
+  // remotely so searching for fediverse friends actually finds them.
+  const remoteActors: {
+    handle: string;
+    name: string;
+    avatarUrl: string | null;
+    actorId: string;
+  }[] = [];
+  const federation = getFederation();
+  const trimmed = q.trim();
+  const looksRemote =
+    trimmed !== "" &&
+    (trimmed.includes("@") || /^https?:\/\//i.test(trimmed)) &&
+    (parseRemoteHandle(trimmed) !== null || /^https?:\/\//i.test(trimmed));
+  if (looksRemote && federation) {
+    const actor = await resolveRemoteActor(federation, trimmed);
+    if (actor && !actor.suspended) {
+      remoteActors.push({
+        handle: actor.handle,
+        name: actor.name ?? actor.handle,
+        avatarUrl: actor.iconUrl,
+        actorId: actor.actorId,
+      });
+    }
+  }
+
   res.render("search", {
     ...(await commonLocals(req, res)),
     pageTitle: "Search",
     q,
     users,
+    remoteActors,
   });
 });
 
