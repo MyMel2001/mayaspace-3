@@ -26,10 +26,25 @@ router.get("/fediverse", async (req: Request, res: Response) => {
   const posts = await store.remoteFeed(30);
   const views = await buildPostViews(posts, req.user);
   const remoteActors = await store.listKnownRemoteActors(20);
+  // Inbound follow requests awaiting approval (shown on-page when logged in).
+  const followRequests = [];
+  if (req.user) {
+    for (const f of await store.listPendingFediverseFollowRequests(req.user.handle)) {
+      const a = await store.getRemoteActor(f.remoteActorId);
+      if (!a || a.suspended) continue;
+      followRequests.push({
+        actorId: a.actorId,
+        handle: a.handle,
+        name: a.name ?? a.handle,
+        avatarUrl: a.iconUrl,
+      });
+    }
+  }
   res.render("fediverse", {
     ...(await commonLocals(req, res)),
     pageTitle: "Fediverse",
     posts: views,
+    followRequests,
     remoteActors: remoteActors.map((a) => ({
       handle: a.handle,
       name: a.name ?? a.handle,

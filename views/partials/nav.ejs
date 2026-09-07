@@ -8,7 +8,7 @@
       <% if (typeof user !== "undefined" && user) { %>
         <a href="/">Home</a>
         <a href="/friends">Friends</a>
-        <a href="/fediverse">Fediverse</a>
+        <a href="/fediverse">Fediverse<% if (typeof pendingFediverseFollows !== "undefined" && pendingFediverseFollows > 0) { %><span class="notif-badge"><%= pendingFediverseFollows %></span><% } %></a>
         <a href="/notifications" class="notif-link">Alerts<% if (unreadNotifications > 0) { %><span class="notif-badge"><%= unreadNotifications %></span><% } %></a>
         <% if (user.role === "admin" || user.role === "moderator") { %><a href="/admin">Admin</a><% } %>
         <a href="/u/<%= user.handle %>">My Space</a>

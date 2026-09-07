@@ -45,14 +45,17 @@ export interface CommonLocals {
   siteName: string;
   siteTagline: string;
   unreadNotifications: number;
+  pendingFediverseFollows: number;
   path: string;
 }
 
 export async function commonLocals(req: Request, res: Response): Promise<CommonLocals> {
   const csrf = issueCsrfToken(req, res);
   let unread = 0;
+  let pendingFediverseFollows = 0;
   if (req.user) {
     unread = await store.unreadNotificationCount(req.user.handle);
+    pendingFediverseFollows = (await store.listPendingFediverseFollowRequests(req.user.handle)).length;
   }
   return {
     user: req.user,
@@ -61,6 +64,7 @@ export async function commonLocals(req: Request, res: Response): Promise<CommonL
     siteName: config.siteName,
     siteTagline: config.siteTagline,
     unreadNotifications: unread,
+    pendingFediverseFollows,
     path: req.path,
   };
 }
