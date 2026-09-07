@@ -562,12 +562,14 @@ export async function sendUnfollow(
       { id: new URL(remote.actorId), inboxId: new URL(remote.inbox) },
       undo,
     );
-    await store.deleteRemoteFollow(localHandle, remote.actorId);
-    return true;
   } catch (err) {
-    log.error`Unfollow delivery failed: ${err}`;
-    return false;
+    log.error`Unfollow delivery failed (local state cleared anyway): ${err}`;
   }
+  // Always clear local state: an undeliverable Undo (dead server, missing
+  // actor record) must not leave a stuck "pending/active" follow row with no
+  // way out of the UI.
+  await store.deleteRemoteFollow(localHandle, remote.actorId);
+  return true;
 }
 
 export async function sendCreateNote(ctx: Context<unknown>, post: PostRecord): Promise<void> {

@@ -4,11 +4,13 @@
  * user approves (Accept delivered back) or declines (Reject delivered back).
  * Outbound "I follow a remote actor" state lives in federation.ts instead.
  */
+import { config } from "../config.js";
 import { getFederation } from "../app.js";
 import { sendFollowAccept, sendFollowReject } from "../fediverse/federation.js";
 import { ensureRemoteActor } from "../fediverse/remote.js";
 import { store } from "../store.js";
 import type { FediverseFollowRecord, RemoteActorRecord } from "../types.js";
+import { parseHttpUrl } from "../util.js";
 
 export type FollowOutcome =
   | { ok: true }
@@ -22,14 +24,26 @@ export async function acceptFediverseFollow(
   const follow = await store.getFediverseFollow(localHandle, remoteActorId);
   if (!follow) return { ok: false, error: "Follow request not found — they may have unfollowed you." };
   if (follow.state === "active") return { ok: true };
-  const remote = await store.getRemoteActor(remoteActorId);
+  // A stale self-follow (the user's own actor IRI, possible from before the
+  // follow route grew its own-instance guard) is bogus — just clear it.
+  if (parseHttpUrl(remoteActorId)?.host === new URL(config.mayaUrl).host) {
+    await store.deleteFediverseFollow(localHandle, remoteActorId);
+    return { ok: true };
+  }
+  let remote = await store.getRemoteActor(remoteActorId);
   if (!remote) {
-    return { ok: false, error: "That fediverse account is no longer known to this server." };
+    // Cached actor record lost (key migration debris, wiped cache…) — try
+    // one live re-resolve so a real follower isn't permanently stranded.
+    const federation = getFederation();
+    remote = federation ? await ensureRemoteActor(federation, remoteActorId) : null;
   }
   // Deliver Accept first so the remote starts treating the follow as live;
-  // delivery failures are logged, not fatal (retry via re-follow).
+  // delivery failures are logged, not fatal (retry via re-follow). When even
+  // the actor record is unrecoverable we still confirm locally: a pending
+  // request must never strand forever with an Accept button that always
+  // errors.
   const federation = getFederation();
-  if (federation && follow.followActivityId !== null) {
+  if (federation && remote && follow.followActivityId !== null) {
     await sendFollowAccept(federation, follow, remote);
   }
   await store.setFediverseFollowState(localHandle, remoteActorId, "active");
@@ -64,23 +78,55 @@ export interface FediverseConnectionView {
   pending: boolean;
 }
 
-/** Maps follow records to display entries (suspended actors are hidden). */
+/** Derives a display handle ("user@host") from a raw actor IRI. */
+function handleFromActorIri(actorId: string): string {
+  try {
+    const u = new URL(actorId);
+    const last = u.pathname.split("/").filter(Boolean).pop();
+    if (last) return `${last.toLowerCase()}@${u.host}`;
+  } catch {
+    // not a URL — keep the raw ref
+  }
+  return actorId;
+}
+
+/**
+ * Maps follow records to display entries (suspended actors are hidden).
+ * Rows whose cached actor record is missing are NOT dropped: pending follow
+ * requests would otherwise silently vanish from profile panels (badge counts
+ * a request that renders nowhere, with no Accept/Decline buttons anywhere) —
+ * exactly the "can't accept follow requests" bug. We fall back to an
+ * IRI-derived stub view so the row stays visible and actionable.
+ */
 export async function connectionViewsFor(
   records: { remoteActorId: string; state: "pending" | "active" }[],
 ): Promise<{ views: FediverseConnectionView[]; total: number }> {
   const views: FediverseConnectionView[] = [];
   for (const f of records) {
     const a: RemoteActorRecord | null = await store.getRemoteActor(f.remoteActorId);
-    if (!a || a.suspended) continue;
-    views.push({
-      name: a.name ?? a.handle,
-      handle: a.handle,
-      actorId: a.actorId,
-      avatarUrl: a.iconUrl,
-      profileUrl: `/fediverse/actor?actor=${encodeURIComponent(a.actorId)}`,
-      isRemote: true,
-      pending: f.state === "pending",
-    });
+    if (a?.suspended) continue;
+    if (a) {
+      views.push({
+        name: a.name ?? a.handle,
+        handle: a.handle,
+        actorId: a.actorId,
+        avatarUrl: a.iconUrl,
+        profileUrl: `/fediverse/actor?actor=${encodeURIComponent(a.actorId)}`,
+        isRemote: true,
+        pending: f.state === "pending",
+      });
+    } else {
+      const fallbackHandle = handleFromActorIri(f.remoteActorId);
+      views.push({
+        name: fallbackHandle,
+        handle: fallbackHandle,
+        actorId: f.remoteActorId,
+        avatarUrl: null,
+        profileUrl: `/fediverse/actor?actor=${encodeURIComponent(f.remoteActorId)}`,
+        isRemote: true,
+        pending: f.state === "pending",
+      });
+    }
   }
   return { views, total: views.length };
 }

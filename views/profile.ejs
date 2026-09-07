@@ -97,7 +97,12 @@
                   <span><%= c.name %></span>
                 </a>
                 <% if (c.isRemote) { %><span class="badge badge-remote">fediverse</span><% } %>
-                <% if (c.pending) { %><span class="badge badge-alert">pending</span><% } %>
+                <% if (c.pending && isSelf && c.actorId) { %>
+                  <form method="post" action="/fediverse/unfollow" class="inline-form">
+                    <input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="actorId" value="<%= c.actorId %>">
+                    <button type="submit" class="btn">Cancel</button>
+                  </form>
+                <% } else if (c.pending) { %><span class="badge badge-alert">pending</span><% } %>
               </li>
             <% } %>
           </ul>

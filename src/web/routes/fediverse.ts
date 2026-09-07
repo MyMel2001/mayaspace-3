@@ -134,15 +134,17 @@ router.post("/fediverse/follow", requireLogin, csrfGuard, async (req: Request, r
 router.post("/fediverse/unfollow", requireLogin, csrfGuard, async (req: Request, res: Response) => {
   const body = req.body as Record<string, unknown>;
   const actorId = typeof body.actorId === "string" ? body.actorId : "";
-  const remote = await store.getRemoteActor(actorId);
   const federation = getFederation();
-  if (!remote || !federation) {
-    flash(req, "error", "Remote account not found.");
-    res.redirect("/fediverse");
-    return;
+  const remote = await store.getRemoteActor(actorId);
+  if (federation && remote) {
+    await sendUnfollow(federation, req.user!.handle, remote);
+    flash(req, "info", `Unfollowed ${escapeHtml(remote.handle)}.`);
+  } else {
+    // No cached actor record (dead server, wiped cache, key-migration debris):
+    // still clear the local follow row so the entry can't strand forever.
+    await store.deleteRemoteFollow(req.user!.handle, actorId);
+    flash(req, "info", "Removed the follow — that account is no longer known to this server.");
   }
-  await sendUnfollow(federation, req.user!.handle, remote);
-  flash(req, "info", `Unfollowed ${escapeHtml(remote.handle)}.`);
   res.redirect(req.get("referer") ?? "/fediverse");
 });
 
