@@ -1,12 +1,17 @@
 /**
  * Fediverse bridging UI: remote actor lookup/profiles, follow/unfollow,
- * the local "fediverse" feed of mirrored remote posts.
+ * follow-request accept/reject, the local "fediverse" feed of mirrored
+ * remote posts.
  */
 import { Router, type Request, type Response } from "express";
 import { store } from "../../store.js";
 import { buildPostViews } from "../../services/render.js";
 import { ensureRemoteActor, resolveRemoteActor } from "../../fediverse/remote.js";
 import { sendFollow, sendUnfollow } from "../../fediverse/federation.js";
+import {
+  acceptFediverseFollow,
+  rejectFediverseFollow,
+} from "../../services/fediverseFollows.js";
 import { getFederation } from "../../app.js";
 import { csrfGuard, requireLogin } from "../../security/auth.js";
 import { commonLocals, flash } from "../helpers.js";
@@ -122,6 +127,57 @@ router.post("/fediverse/unfollow", requireLogin, csrfGuard, async (req: Request,
   await sendUnfollow(federation, req.user!.handle, remote);
   flash(req, "info", `Unfollowed ${escapeHtml(remote.handle)}.`);
   res.redirect(req.get("referer") ?? "/fediverse");
+});
+
+router.post(
+  "/fediverse/follow-requests/accept",
+  requireLogin,
+  csrfGuard,
+  async (req: Request, res: Response) => {
+    const body = req.body as Record<string, unknown>;
+    const actorId = typeof body.actorId === "string" ? body.actorId : "";
+    const result = await acceptFediverseFollow(req.user!.handle, actorId);
+    const remote = result.ok ? await store.getRemoteActor(actorId) : null;
+    if (!result.ok) flash(req, "error", result.error);
+    else flash(req, "success", `Approved — ${remote?.name ?? remote?.handle ?? "they"} now follows you.`);
+    res.redirect(req.get("referer") ?? "/fediverse/follow-requests");
+  },
+);
+
+router.post(
+  "/fediverse/follow-requests/reject",
+  requireLogin,
+  csrfGuard,
+  async (req: Request, res: Response) => {
+    const body = req.body as Record<string, unknown>;
+    const actorId = typeof body.actorId === "string" ? body.actorId : "";
+    const result = await rejectFediverseFollow(req.user!.handle, actorId);
+    if (!result.ok) flash(req, "error", result.error);
+    else flash(req, "info", "Follow request declined.");
+    res.redirect(req.get("referer") ?? "/fediverse/follow-requests");
+  },
+);
+
+/** The local user's queue of inbound fediverse follow requests. */
+router.get("/fediverse/follow-requests", requireLogin, async (req: Request, res: Response) => {
+  const handle = req.user!.handle;
+  const pending = await store.listPendingFediverseFollowRequests(handle);
+  const requests = [];
+  for (const f of pending) {
+    const a = await store.getRemoteActor(f.remoteActorId);
+    if (!a || a.suspended) continue;
+    requests.push({
+      actorId: a.actorId,
+      handle: a.handle,
+      name: a.name ?? a.handle,
+      avatarUrl: a.iconUrl,
+    });
+  }
+  res.render("followRequests", {
+    ...(await commonLocals(req, res)),
+    pageTitle: "Fediverse follow requests",
+    requests,
+  });
 });
 
 /** Remote-post mirroring entry point used when we fetch an unknown note URL. */

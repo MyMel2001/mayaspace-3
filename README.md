@@ -81,18 +81,23 @@ Fore-ground dev with auto-restart: `npm run dev`.
 
 - WebFinger, NodeInfo 2.1, actor/notes documents, followers/following/outbox/liked
   collections, inbox with shared inbox.
-- Inbound: `Follow` (+auto `Accept`), `Create` (note mirroring, reply threading),
-  `Like`, `Announce`, `Undo`, `Delete` (tombstones), `Update`.
+- Inbound: `Follow` (queued for **manual approval** — accept/reject at
+  `/fediverse/follow-requests`, Accept/Reject activities delivered back),
+  `Accept` (confirms your outbound follows), `Create` (note mirroring, reply
+  threading), `Like`, `Announce`, `Undo`, `Delete` (tombstones), `Update`.
 - Outbound: `Follow`/`Undo(Follow)` any remote actor from `/fediverse`,
   `Create(Note)` fan-out to followers, `Like`/`Undo(Like)` remote posts,
   `Delete` on moderation.
 - Deliveries go through a **persistent SQLite-backed queue** (`@fedify/sqlite`) with retries.
 - Mirrored remote posts appear in the `/fediverse` feed with a ᶠᵉᵈ badge; remote
   profiles resolve by handle (`user@server`) or URL.
+- Profiles show **Follower / Following counts and lists** that mix local friends
+  with fediverse connections — remote accounts carry a `fediverse` badge, pending
+  inbound requests are visible to the profile owner.
 
 **Plumbing**
 
-- All storage in **Quick.DB** (better-sqlite3 driver) across 13 tables.
+- All storage in **Quick.DB** (better-sqlite3 driver) across 14 tables.
 - **In-process async scheduler** (overlap-guarded, unref'd timers): orphan
   attachment purge every 6 h, notification pruning every 24 h; admins can
   trigger jobs from the admin panel.
@@ -130,7 +135,7 @@ src/
   index.ts             # entry: logging → store → federation → scheduler → HTTP
   app.ts               # express assembly + getFederation() context provider
   config.ts            # validated env parsing
-  store.ts             # Quick.DB wrapper (13 tables)
+  store.ts             # Quick.DB wrapper (14 tables)
   scheduler.ts         # in-process async background jobs
   types.ts             # records + view models
   util.ts logger.ts

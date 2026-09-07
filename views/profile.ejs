@@ -21,7 +21,8 @@
       <div class="profile-actions">
         <% if (isSelf) { %>
           <a href="/settings" class="btn">Edit my Space</a>
-          <% if (pendingCount > 0) { %><a href="/friends" class="btn btn-alert"><%= pendingCount %> pending request<%= pendingCount === 1 ? "" : "s" %></a><% } %>
+          <% if (pendingCount > 0 || pendingFollowRequests > 0) { %><a href="/friends" class="btn btn-alert"><%= pendingCount + pendingFollowRequests %> pending request<%= pendingCount + pendingFollowRequests === 1 ? "" : "s" %></a><% } %>
+          <% if (pendingFollowRequests > 0) { %><a href="/fediverse/follow-requests" class="btn btn-alert">🌐 <%= pendingFollowRequests %> fediverse follow request<%= pendingFollowRequests === 1 ? "" : "s" %></a><% } %>
         <% } else if (user) { %>
           <% if (isFriend) { %>
             <form method="post" action="/friends/remove" class="inline-form">
@@ -55,6 +56,43 @@
             <span><%= f.displayName %></span>
           </a>
         <% } %>
+      </div>
+    </section>
+
+    <section class="profile-connections panel">
+      <div class="connections-grid">
+        <div class="connections-col">
+          <h2 class="panel-title">Followers <span class="muted">(<%= followerCount %>)</span></h2>
+          <% if (followers.length === 0) { %><p class="muted">Nobody's following yet.</p><% } %>
+          <ul class="connection-list">
+            <% for (const c of followers) { %>
+              <li>
+                <a href="<%= c.profileUrl %>">
+                  <% if (c.avatarUrl) { %><img src="<%= c.avatarUrl %>" alt="" loading="lazy"><% } else { %><span class="avatar-fallback"><%= c.name.slice(0, 1).toUpperCase() %></span><% } %>
+                  <span><%= c.name %></span>
+                </a>
+                <% if (c.isRemote) { %><span class="badge badge-remote">fediverse</span><% } %>
+                <% if (c.pending) { %><span class="badge badge-alert">pending</span><% } %>
+              </li>
+            <% } %>
+          </ul>
+        </div>
+        <div class="connections-col">
+          <h2 class="panel-title">Following <span class="muted">(<%= followingCount %>)</span></h2>
+          <% if (following.length === 0) { %><p class="muted">Not following anyone yet.</p><% } %>
+          <ul class="connection-list">
+            <% for (const c of following) { %>
+              <li>
+                <a href="<%= c.profileUrl %>">
+                  <% if (c.avatarUrl) { %><img src="<%= c.avatarUrl %>" alt="" loading="lazy"><% } else { %><span class="avatar-fallback"><%= c.name.slice(0, 1).toUpperCase() %></span><% } %>
+                  <span><%= c.name %></span>
+                </a>
+                <% if (c.isRemote) { %><span class="badge badge-remote">fediverse</span><% } %>
+                <% if (c.pending) { %><span class="badge badge-alert">pending</span><% } %>
+              </li>
+            <% } %>
+          </ul>
+        </div>
       </div>
     </section>
 

@@ -26,7 +26,9 @@ export async function buildNotificationViews(
           ? `/post/${n.postId}`
           : n.type === "friend_request" || n.type === "friend_accept"
             ? "/friends"
-            : "/notifications";
+            : n.type === "remote_follow_request"
+              ? "/fediverse/follow-requests"
+              : "/notifications";
     views.push({
       id: n.id,
       type: n.type,

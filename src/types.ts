@@ -104,12 +104,22 @@ export interface FriendEdgeRecord {
   createdAt: string;
 }
 
-/** A local user following a remote actor (fediverse "friendship"). */
+/** A local user following a remote actor (outbound fediverse follow). */
 export interface RemoteFollowRecord {
-  id: string;
+  id: string; // "<localHandle>|<remoteActorId>"
   localHandle: string;
   remoteActorId: string;
   state: "pending" | "active";
+  createdAt: string;
+}
+
+/** A remote actor following a local user (inbound fediverse follow). */
+export interface FediverseFollowRecord {
+  id: string; // "in|<remoteActorId>|<localHandle>"
+  localHandle: string; // the followed local user
+  remoteActorId: string; // the remote follower
+  state: "pending" | "active"; // pending = awaiting local approval
+  followActivityId: string | null; // IRI of the original Follow activity (for Accept/Reject)
   createdAt: string;
 }
 
@@ -120,6 +130,7 @@ export type NotificationType =
   | "like"
   | "comment_like"
   | "remote_follow"
+  | "remote_follow_request"
   | "remote_accept"
   | "mention";
 

@@ -20,8 +20,9 @@
       <div class="notif-row <%= n.read ? "" : "notif-unread" %>">
         <% if (n.actor && n.actor.avatarUrl) { %><img src="<%= n.actor.avatarUrl %>" alt="" width="32" height="32" loading="lazy"><% } %>
         <div class="notif-main">
-          <% if (n.actor) { %><a href="<%= n.actor.profileUrl %>" class="notif-actor"><%= n.actor.displayName %></a><% } %>
+          <% if (n.actor) { %><a href="<%= n.actor.profileUrl %>" class="notif-actor"><%= n.actor.displayName %></a><% if (n.actor.isRemote) { %><span class="badge badge-remote">fediverse</span><% } %><% } %>
           <a href="<%= n.link %>"><span class="notif-msg"><%- n.message %></span></a>
+          <% if (n.type === "remote_follow_request") { %><a href="<%= n.link %>" class="btn btn-primary">Review</a><% } %>
           <span class="muted"><%= n.timeAgo %></span>
         </div>
         <% if (!n.read) { %><span class="notif-dot" aria-label="unread"></span><% } %>

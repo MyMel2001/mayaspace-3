@@ -454,6 +454,32 @@ label .muted { font-weight: normal; }
 .actor-list li:last-child { border-bottom: none; }
 .actor-list img { border-radius: 4px; vertical-align: middle; margin-right: 4px; }
 
+/* ── followers / following panels ────────────────────────── */
+
+.connections-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+@media (max-width: 600px) { .connections-grid { grid-template-columns: 1fr; } }
+.connections-col { min-width: 0; }
+.connections-col .panel-title { font-size: 14px; }
+.connection-list { list-style: none; margin: 0; padding: 0; }
+.connection-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: 1px dotted var(--maya-border);
+  flex-wrap: wrap;
+}
+.connection-list li:last-child { border-bottom: none; }
+.connection-list a { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.connection-list img, .connection-list .avatar-fallback { width: 28px; height: 28px; border-radius: 4px; }
+.connection-list .avatar-fallback { display: inline-flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; }
+.connection-list a span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-row img { border-radius: 4px; vertical-align: middle; margin-right: 4px; }
+
 .stat-box {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

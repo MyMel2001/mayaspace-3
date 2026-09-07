@@ -1,15 +1,31 @@
 /**
  * Profile pages, editing (CSS customization with sanitization), avatars.
+ * Follower/following panels mix local friends with fediverse connections
+ * (remote actors get a "fediverse" badge).
  */
 import { Router, type Request, type Response } from "express";
 import { store } from "../../store.js";
 import { buildPostViews } from "../../services/render.js";
 import { setAvatar, updateProfile } from "../../services/users.js";
 import { processUpload } from "../../services/attachments.js";
+import {
+  connectionViewsFor,
+  type FediverseConnectionView,
+} from "../../services/fediverseFollows.js";
 import { avatarUpload } from "../upload.js";
 import { requireLogin, csrfGuard, uploadLimiter } from "../../security/auth.js";
 import { commonLocals, flash } from "../helpers.js";
 import { config } from "../../config.js";
+
+/** One entry in the followers / following panels. */
+export interface ConnectionEntry {
+  name: string;
+  handle: string;
+  avatarUrl: string | null;
+  profileUrl: string;
+  isRemote: boolean;
+  pending: boolean;
+}
 
 const router = Router();
 
@@ -48,11 +64,67 @@ async function profilePage(
     (await store.listFriends(handle)).slice(0, 8).map(async (h) => {
       const u = await store.getUser(h);
       return u && !u.suspended
-        ? { handle: u.handle, displayName: u.displayName, avatarUrl: u.avatar ? `/media/${u.avatar}` : null }
+        ? {
+            handle: u.handle,
+            displayName: u.displayName,
+            avatarUrl: u.avatar ? `/media/${u.avatar}` : null,
+          }
         : null;
     }),
   );
   const pendingCount = isSelf ? (await store.listPendingRequestsTo(handle)).length : 0;
+
+  // ── followers / following (friends + fediverse, with badges) ──────────────
+  const friendEntries: ConnectionEntry[] = friends
+    .filter((f) => f !== null)
+    .map((f) => ({
+      name: f!.displayName,
+      handle: f!.handle,
+      avatarUrl: f!.avatarUrl,
+      profileUrl: `/u/${f!.handle}`,
+      isRemote: false,
+      pending: false,
+    }));
+
+  // Fediverse followers (inbound follows). Pending ones only show to self.
+  const inboundRecords = await store.listFediverseFollows(handle);
+  const visibleInbound = isSelf
+    ? inboundRecords
+    : inboundRecords.filter((f) => f.state === "active");
+  const inbound = await connectionViewsFor(visibleInbound);
+
+  // Fediverse accounts this user follows (outbound follows).
+  const outboundRecords = await store.listRemoteFollows(handle);
+  const visibleOutbound = isSelf
+    ? outboundRecords
+    : outboundRecords.filter((f) => f.state === "active");
+  const outbound = await connectionViewsFor(visibleOutbound);
+
+  const followerEntries: ConnectionEntry[] = [
+    ...friendEntries,
+    ...inbound.views.map((v: FediverseConnectionView) => ({
+      name: v.name,
+      handle: v.handle,
+      avatarUrl: v.avatarUrl,
+      profileUrl: v.profileUrl,
+      isRemote: v.isRemote,
+      pending: v.pending,
+    })),
+  ];
+  const followingEntries: ConnectionEntry[] = [
+    ...friendEntries,
+    ...outbound.views.map((v: FediverseConnectionView) => ({
+      name: v.name,
+      handle: v.handle,
+      avatarUrl: v.avatarUrl,
+      profileUrl: v.profileUrl,
+      isRemote: v.isRemote,
+      pending: v.pending,
+    })),
+  ];
+  const pendingFollowRequests = isSelf
+    ? (await store.listPendingFediverseFollowRequests(handle)).length
+    : 0;
 
   res.render("profile", {
     ...(await commonLocals(req, res)),
@@ -75,6 +147,11 @@ async function profilePage(
     friendCount,
     friends: friends.filter((f) => f !== null),
     pendingCount,
+    followerCount: followerEntries.length,
+    followers: followerEntries.slice(0, 12),
+    followingCount: followingEntries.length,
+    following: followingEntries.slice(0, 12),
+    pendingFollowRequests,
   });
 }
 

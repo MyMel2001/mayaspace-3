@@ -10,6 +10,7 @@ import type {
   AttachmentRecord,
   CommentLikeRecord,
   CommentRecord,
+  FediverseFollowRecord,
   FriendEdgeRecord,
   FriendRequestRecord,
   LikeRecord,
@@ -32,6 +33,7 @@ type AnyRecord =
   | FriendRequestRecord
   | FriendEdgeRecord
   | RemoteFollowRecord
+  | FediverseFollowRecord
   | RemoteActorRecord
   | NotificationRecord
   | ModerationLogRecord
@@ -46,6 +48,7 @@ const TABLES = [
   "friendRequests",
   "friendEdges",
   "remoteFollows",
+  "fediverseFollows",
   "remoteActors",
   "notifications",
   "modLog",
@@ -63,6 +66,7 @@ export class Store {
   friendRequests!: QuickDB<FriendRequestRecord>;
   friendEdges!: QuickDB<FriendEdgeRecord>;
   remoteFollows!: QuickDB<RemoteFollowRecord>;
+  fediverseFollows!: QuickDB<FediverseFollowRecord>;
   remoteActors!: QuickDB<RemoteActorRecord>;
   notifications!: QuickDB<NotificationRecord>;
   modLog!: QuickDB<ModerationLogRecord>;
@@ -92,6 +96,7 @@ export class Store {
       }
     }
     await this.migrateLegacyDottedKeys();
+    await this.migrateInboundFollows();
   }
 
   /**
@@ -153,6 +158,36 @@ export class Store {
       }
     }
     await this.kvSet("storeKeyMigrationDone", true);
+  }
+
+  /**
+   * Legacy remoteFollows rows doubled as inbound "remote actor follows local
+   * user" records: the old inbox listener wrote them with state "active",
+   * while outbound follows were always written as "pending" (nothing ever
+   * flipped them). Move the active rows into the dedicated fediverseFollows
+   * table so the two directions never collide.
+   */
+  private async migrateInboundFollows(): Promise<void> {
+    if ((await this.kvGet("fediverseFollowMigrationDone")) === true) return;
+    const rows = await this.remoteFollows.all<RemoteFollowRecord>();
+    let moved = 0;
+    for (const row of rows) {
+      const f = row.value;
+      if (!f || f.state !== "active") continue;
+      const record: FediverseFollowRecord = {
+        id: `in|${f.remoteActorId}|${f.localHandle}`,
+        localHandle: f.localHandle,
+        remoteActorId: f.remoteActorId,
+        state: "active",
+        followActivityId: null,
+        createdAt: f.createdAt,
+      };
+      await this.fediverseFollows.set(Store.key(record.id), record);
+      await this.remoteFollows.delete(row.id);
+      moved++;
+    }
+    if (moved > 0) console.log(`[store] migrated ${moved} inbound fediverse follow(s)`);
+    await this.kvSet("fediverseFollowMigrationDone", true);
   }
 
   // ── generic helpers ───────────────────────────────────────────────────────
@@ -462,17 +497,34 @@ export class Store {
     return all.filter((f) => f.localHandle === localHandle);
   }
 
+  /** Local users that follow a given remote actor (confirmed only). */
   async listRemoteFollowersOf(actorId: string): Promise<RemoteFollowRecord[]> {
     const all = await this.all(this.remoteFollows);
     return all.filter((f) => f.remoteActorId === actorId && f.state === "active");
   }
 
-  async deleteRemoteFollow(localHandle: string, actorId: string): Promise<void> {
-    await this.remoteFollows.delete(Store.key(Store.remoteFollowKey(localHandle, actorId)));
+  /** All outbound follow records a given remote actor is the target of. */
+  async remoteFollowsByActor(actorId: string): Promise<RemoteFollowRecord[]> {
+    const all = await this.all(this.remoteFollows);
+    return all.filter((f) => f.remoteActorId === actorId);
   }
 
-  async countLocalFollowersOf(actorId: string): Promise<number> {
-    return (await this.listRemoteFollowersOf(actorId)).length;
+  async setRemoteFollowState(
+    localHandle: string,
+    actorId: string,
+    state: RemoteFollowRecord["state"],
+  ): Promise<boolean> {
+    const existing = await this.getRemoteFollow(localHandle, actorId);
+    if (!existing) return false;
+    await this.remoteFollows.set(Store.key(Store.remoteFollowKey(localHandle, actorId)), {
+      ...existing,
+      state,
+    });
+    return true;
+  }
+
+  async deleteRemoteFollow(localHandle: string, actorId: string): Promise<void> {
+    await this.remoteFollows.delete(Store.key(Store.remoteFollowKey(localHandle, actorId)));
   }
 
   // ── remote actors ─────────────────────────────────────────────────────────
@@ -513,37 +565,63 @@ export class Store {
     return all.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, limit);
   }
 
-  async remoteFollowCountsFor(handle: string): Promise<{ following: number }> {
-    return { following: (await this.listRemoteFollows(handle)).length };
+  // ── fediverse follow requests (remote actor → local user) ─────────────────
+
+  static fediverseFollowKey(localHandle: string, actorId: string): string {
+    return `in|${actorId}|${localHandle}`;
   }
 
-  /** Remote actors that follow a LOCAL user's fediverse actor. */
-  async remoteFollowersOfLocal(handle: string): Promise<RemoteFollowRecord[]> {
-    const all = await this.all(this.remoteFollows);
-    return all.filter((f) => f.remoteActorId.startsWith(this.mayaUserBase(handle)));
+  async upsertFediverseFollow(f: FediverseFollowRecord): Promise<void> {
+    await this.fediverseFollows.set(
+      Store.key(Store.fediverseFollowKey(f.localHandle, f.remoteActorId)),
+      f,
+    );
   }
 
-  /** Adds/refreshes a "remote actor follows local user" record. */
-  async addLocalFollower(localHandle: string, remoteActorId: string): Promise<void> {
-    const id = Store.key(Store.remoteFollowKey(localHandle, remoteActorId));
-    const existing = await this.remoteFollows.get(id);
-    await this.remoteFollows.set(id, {
-      id: Store.remoteFollowKey(localHandle, remoteActorId),
-      localHandle,
-      remoteActorId,
-      state: "active",
-      createdAt: existing?.createdAt ?? isoNow(),
+  async getFediverseFollow(
+    localHandle: string,
+    actorId: string,
+  ): Promise<FediverseFollowRecord | null> {
+    return this.fediverseFollows.get(Store.key(Store.fediverseFollowKey(localHandle, actorId)));
+  }
+
+  async listFediverseFollows(handle: string): Promise<FediverseFollowRecord[]> {
+    const all = await this.all(this.fediverseFollows);
+    return all.filter((f) => f.localHandle === handle);
+  }
+
+  /** Confirmed fediverse followers of a local user. */
+  async listActiveFediverseFollowers(handle: string): Promise<FediverseFollowRecord[]> {
+    return (await this.listFediverseFollows(handle)).filter((f) => f.state === "active");
+  }
+
+  /** Fediverse follow requests awaiting the local user's approval. */
+  async listPendingFediverseFollowRequests(handle: string): Promise<FediverseFollowRecord[]> {
+    return (await this.listFediverseFollows(handle)).filter((f) => f.state === "pending");
+  }
+
+  async setFediverseFollowState(
+    localHandle: string,
+    actorId: string,
+    state: FediverseFollowRecord["state"],
+  ): Promise<boolean> {
+    const existing = await this.getFediverseFollow(localHandle, actorId);
+    if (!existing) return false;
+    await this.fediverseFollows.set(Store.key(Store.fediverseFollowKey(localHandle, actorId)), {
+      ...existing,
+      state,
     });
+    return true;
   }
 
-  async removeLocalFollower(localHandle: string, remoteActorId: string): Promise<void> {
-    await this.remoteFollows.delete(Store.key(Store.remoteFollowKey(localHandle, remoteActorId)));
+  async deleteFediverseFollow(localHandle: string, actorId: string): Promise<void> {
+    await this.fediverseFollows.delete(Store.key(Store.fediverseFollowKey(localHandle, actorId)));
   }
 
-  private mayaUserBase(handle: string): string {
-    // Local followers are tracked as follows whose remoteActorId is the
-    // local actor IRI of the followed user.
-    return new URL(`/users/${encodeURIComponent(handle)}`, config.mayaUrl).href;
+  /** Every local user a given remote actor follows (any state). */
+  async fediverseFollowsByActor(actorId: string): Promise<FediverseFollowRecord[]> {
+    const all = await this.all(this.fediverseFollows);
+    return all.filter((f) => f.remoteActorId === actorId);
   }
 
   // ── likes ─────────────────────────────────────────────────────────────────

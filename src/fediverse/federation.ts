@@ -19,6 +19,7 @@ import {
   Note,
   Person,
   PUBLIC_COLLECTION,
+  Reject,
   Service,
   Tombstone,
   Undo,
@@ -26,8 +27,8 @@ import {
 } from "@fedify/vocab";
 import { config } from "../config.js";
 import { appLog } from "../logger.js";
-import { store } from "../store.js";
-import type { PostRecord, RemoteActorRecord } from "../types.js";
+import { store, Store } from "../store.js";
+import type { FediverseFollowRecord, PostRecord, RemoteActorRecord } from "../types.js";
 import { isoNow, newId, stripHtml } from "../util.js";
 import { sanitizePostHtml } from "../security/sanitize.js";
 import { getActorKeyPairs } from "./keys.js";
@@ -103,7 +104,7 @@ const actorDispatcher = async (
     liked: ctx.getLikedUri(handle),
     url: new URL(`${config.mayaUrl}/u/${handle}`),
     summary: user.bioHtml === "" ? null : user.bioHtml,
-    manuallyApprovesFollowers: false,
+    manuallyApprovesFollowers: true,
     published: toInstant(user.createdAt),
     icon,
   });
@@ -139,16 +140,7 @@ const followersDispatcher = async (
   identifier: string,
 ) => {
   const handle = decodeURIComponent(identifier).toLowerCase();
-  const followers = await store.remoteFollowersOfLocal(handle);
-  const items = followers
-    .map((f) => store.getRemoteActor(f.remoteActorId))
-    .filter((a): a is Promise<RemoteActorRecord> => true);
-  const resolved: RemoteActorRecord[] = [];
-  for (const p of items) {
-    const actor = await p;
-    if (actor) resolved.push(actor);
-  }
-  void resolved;
+  const followers = await store.listActiveFediverseFollowers(handle);
   // Recipient objects only need id + inboxId:
   const recipients = [];
   for (const f of followers) {
@@ -210,35 +202,74 @@ function setupInboxListeners(
       const followerId = follow.actorId?.href;
       if (!followerId) return;
       const remote = await resolveRemoteActor(ctx, followerId);
-      if (!remote) return;
+      if (!remote || remote.suspended) return;
 
-      await store.addLocalFollower(localHandle, remote.actorId);
-      await store.createNotification({
-        toHandle: localHandle,
-        type: "remote_follow",
-        actorHandle: null,
-        remoteActorId: remote.actorId,
-        postId: null,
-        commentId: null,
-        message: `${remote.name ?? remote.handle} followed you from the fediverse.`,
-      });
-
-      const accept = new Accept({
-        id: new URL(`${config.mayaUrl}/activities/${newId()}`),
-        actor: ctx.getActorUri(localHandle),
-        object: follow,
-        to: new URL(followerId),
-      });
-      try {
-        await ctx.sendActivity(
-          { identifier: localHandle },
-          { id: new URL(followerId), inboxId: new URL(remote.inbox) },
-          accept,
-        );
-      } catch (err) {
-        log.warn`Accept delivery failed: ${err}`;
+      // Queue a follow request for the local user to approve — the actor
+      // advertises manuallyApprovesFollowers. An already-approved follower
+      // re-sending Follow (key re-sync, server migration…) is re-confirmed
+      // immediately instead of being demoted back to pending.
+      const existing = await store.getFediverseFollow(localHandle, remote.actorId);
+      if (existing?.state === "active") {
+        const accept = new Accept({
+          id: new URL(`${config.mayaUrl}/activities/${newId()}`),
+          actor: ctx.getActorUri(localHandle),
+          object: follow,
+          to: new URL(followerId),
+        });
+        try {
+          await ctx.sendActivity(
+            { identifier: localHandle },
+            { id: new URL(followerId), inboxId: new URL(remote.inbox) },
+            accept,
+          );
+        } catch (err) {
+          log.warn`Follow re-accept delivery failed: ${err}`;
+        }
+        log.debug`Follow re-confirmed: ${remote.handle} -> ${localHandle}`;
+        return;
       }
-      log.debug`Follow received: ${remote.handle} -> ${localHandle}`;
+      await store.upsertFediverseFollow({
+        id: Store.fediverseFollowKey(localHandle, remote.actorId),
+        localHandle,
+        remoteActorId: remote.actorId,
+        state: "pending",
+        followActivityId: follow.id?.href ?? null,
+        createdAt: existing?.createdAt ?? isoNow(),
+      });
+      if (existing === null) {
+        await store.createNotification({
+          toHandle: localHandle,
+          type: "remote_follow_request",
+          actorHandle: null,
+          remoteActorId: remote.actorId,
+          postId: null,
+          commentId: null,
+          message: `${remote.name ?? remote.handle} requested to follow you from the fediverse.`,
+        });
+      }
+      log.debug`Follow request queued: ${remote.handle} -> ${localHandle}`;
+    })
+    .on(Accept, async (_ctx, accept) => {
+      // A remote server confirmed our outbound Follow.
+      const actorId = accept.actorId?.href;
+      if (!actorId) return;
+      const object = await accept.getObject();
+      if (!(object instanceof Follow)) return;
+      for (const f of await store.remoteFollowsByActor(actorId)) {
+        if (f.state === "pending") {
+          await store.setRemoteFollowState(f.localHandle, actorId, "active");
+          await store.createNotification({
+            toHandle: f.localHandle,
+            type: "remote_accept",
+            actorHandle: null,
+            remoteActorId: actorId,
+            postId: null,
+            commentId: null,
+            message: `${actorId} accepted your follow request.`,
+          });
+          log.debug`Outbound follow confirmed: ${f.localHandle} -> ${actorId}`;
+        }
+      }
     })
     .on(Create, async (ctx, create) => {
       const object = await create.getObject();
@@ -362,7 +393,7 @@ function setupInboxListeners(
       const recipient = (ctx as unknown as { recipient: string | null }).recipient;
       if (object instanceof Follow && recipient !== null) {
         const localHandle = decodeURIComponent(recipient).toLowerCase();
-        await store.removeLocalFollower(localHandle, actorId);
+        await store.deleteFediverseFollow(localHandle, actorId);
         log.debug`Remote unfollow: ${actorId} -> ${localHandle}`;
       } else if (object instanceof Like || object instanceof Announce) {
         const objectId = object.objectId?.href;
@@ -414,7 +445,7 @@ export async function initFederation() {
     .setFollowersDispatcher("/users/{identifier}/followers", followersDispatcher)
     .setCounter(async (_ctx, identifier) => {
       const handle = decodeURIComponent(identifier).toLowerCase();
-      const followers = await store.remoteFollowersOfLocal(handle);
+      const followers = await store.listActiveFediverseFollowers(handle);
       return followers.length;
     });
 
@@ -585,6 +616,61 @@ export async function sendRemoteLike(
     return true;
   } catch (err) {
     log.warn`Like delivery failed: ${err}`;
+    return false;
+  }
+}
+
+/** Accepts a stored inbound follow request (delivers an Accept activity). */
+export async function sendFollowAccept(
+  ctx: Context<unknown>,
+  follow: FediverseFollowRecord,
+  remote: RemoteActorRecord,
+): Promise<boolean> {
+  const accept = new Accept({
+    id: new URL(`${config.mayaUrl}/activities/${newId()}`),
+    actor: ctx.getActorUri(follow.localHandle),
+    object: follow.followActivityId
+      ? // Reconstruct a minimal reference to the original Follow activity.
+        new Follow({ id: new URL(follow.followActivityId) })
+      : undefined,
+    to: new URL(remote.actorId),
+  });
+  try {
+    await ctx.sendActivity(
+      { identifier: follow.localHandle },
+      { id: new URL(remote.actorId), inboxId: new URL(remote.inbox) },
+      accept,
+    );
+    return true;
+  } catch (err) {
+    log.warn`Follow Accept delivery failed: ${err}`;
+    return false;
+  }
+}
+
+/** Rejects a stored inbound follow request (delivers a Reject activity). */
+export async function sendFollowReject(
+  ctx: Context<unknown>,
+  follow: FediverseFollowRecord,
+  remote: RemoteActorRecord,
+): Promise<boolean> {
+  const reject = new Reject({
+    id: new URL(`${config.mayaUrl}/activities/${newId()}`),
+    actor: ctx.getActorUri(follow.localHandle),
+    object: follow.followActivityId
+      ? new Follow({ id: new URL(follow.followActivityId) })
+      : undefined,
+    to: new URL(remote.actorId),
+  });
+  try {
+    await ctx.sendActivity(
+      { identifier: follow.localHandle },
+      { id: new URL(remote.actorId), inboxId: new URL(remote.inbox) },
+      reject,
+    );
+    return true;
+  } catch (err) {
+    log.warn`Follow Reject delivery failed: ${err}`;
     return false;
   }
 }

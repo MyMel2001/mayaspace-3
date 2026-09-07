@@ -1,0 +1,35 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page page-narrow">
+  <section class="panel">
+    <h1 class="panel-title">🌐 Fediverse follow requests</h1>
+    <p class="muted">Remote accounts that want to follow you. Approving sends them an Accept; declining sends a Reject and forgets the request.</p>
+  </section>
+
+  <section class="panel">
+    <% if (requests.length === 0) { %>
+      <div class="empty-state"><p>No pending follow requests. The fediverse is quiet right now. 🌙</p></div>
+    <% } %>
+    <% for (const r of requests) { %>
+      <div class="friend-row">
+        <a href="/fediverse/actor?actor=<%= encodeURIComponent(r.actorId) %>" class="friend-name">
+          <% if (r.avatarUrl) { %><img src="<%= r.avatarUrl %>" alt="" width="32" height="32" loading="lazy"><% } %>
+          <%= r.name %>
+        </a>
+        <span class="badge badge-remote">fediverse</span>
+        <span class="muted">@<%= r.handle %></span>
+        <form method="post" action="/fediverse/follow-requests/accept" class="inline-form">
+          <input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="actorId" value="<%= r.actorId %>">
+          <button type="submit" class="btn btn-primary">Accept</button>
+        </form>
+        <form method="post" action="/fediverse/follow-requests/reject" class="inline-form">
+          <input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="actorId" value="<%= r.actorId %>">
+          <button type="submit" class="btn">Decline</button>
+        </form>
+      </div>
+    <% } %>
+  </section>
+</div>
+
+<%- include("partials/foot") %>
