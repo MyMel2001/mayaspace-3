@@ -45,7 +45,7 @@ Fore-ground dev with auto-restart: `npm run dev`.
 | `ATTACHMENTS_PER_POST` | `4` | Max images per post (1–12). |
 | `POST_MAX_CHARS` / `COMMENT_MAX_CHARS` | `10000` / `3000` | Text limits. |
 | `COOKIE_SECURE` | `auto` | `auto` = secure cookies iff `MAYA_URL` is https. |
-| `TRUST_PROXY` | `0` | Express `trust proxy` hops (set `1` behind nginx/Caddy). |
+| `TRUST_PROXY` | `1` | Express `trust proxy` hops. **Must be ≥ 1 whenever TLS terminates at a proxy (nginx/Caddy/Cloudflare)** — otherwise `secure` session cookies are silently suppressed and login sessions never stick. |
 | `LOG_LEVEL` | `info` (prod) / `debug` | LogTape level (`debug`, `info`, …). |
 
 ### Spinning up an admin

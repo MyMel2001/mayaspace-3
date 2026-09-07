@@ -82,6 +82,21 @@ if (isProd) {
   }
 }
 
+const trustProxyHops = int("TRUST_PROXY", 0);
+
+// A https MAYA_URL with zero trusted proxies means TLS terminates elsewhere
+// (Cloudflare/nginx/Caddy…). Express then believes requests are plain HTTP,
+// express-session suppresses its `secure` cookie, and login sessions never
+// stick — a misconfiguration that previously failed silently at login time.
+// Refuse to boot rather than let it surface as "can't stay logged in".
+if (mayaUrl.startsWith("https://") && trustProxyHops === 0) {
+  throw new Error(
+    "MAYA_URL is https but TRUST_PROXY=0. Set TRUST_PROXY=1 (or more) behind " +
+      "a TLS-terminating proxy, otherwise secure session cookies are never " +
+      "sent and users cannot stay logged in.",
+  );
+}
+
 export const config = {
   /** Canonical public origin of this instance, used for all actor/object IRIs. */
   mayaUrl,
@@ -99,7 +114,7 @@ export const config = {
   commentMaxChars: Math.max(1, int("COMMENT_MAX_CHARS", 3000)),
   cookieSecure:
     cookieSecureRaw === "auto" ? mayaUrl.startsWith("https://") : cookieSecureRaw === "true",
-  trustProxy: int("TRUST_PROXY", 0),
+  trustProxy: trustProxyHops,
   logLevel: str("LOG_LEVEL", isProd ? "info" : "debug"),
   /** Software identity reported via NodeInfo. */
   software: { name: "mayaspace", version: "1.0.0" },
