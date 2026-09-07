@@ -11,7 +11,7 @@
 #  only needed if a native module has no musl prebuild for this platform.)
 FROM node:24.20-trixie-slim AS deps
 WORKDIR /app
-RUN apk add --no-cache python3 make g++
+RUN apt install --no-cache python3 make g++
 COPY package.json package-lock.json ./
 RUN npm i
 
