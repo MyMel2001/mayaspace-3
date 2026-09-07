@@ -55,8 +55,9 @@ router.get("/fediverse/actor", async (req: Request, res: Response) => {
   }
   const posts = await store.postsByRemoteActor(actor.actorId);
   const views = await buildPostViews(posts, req.user);
-  const following =
-    req.user !== undefined && (await store.getRemoteFollow(req.user.handle, actor.actorId)) !== null;
+  const followRecord =
+    req.user !== undefined ? await store.getRemoteFollow(req.user.handle, actor.actorId) : null;
+  const following = followRecord !== null && followRecord !== undefined;
   res.render("remoteActor", {
     ...(await commonLocals(req, res)),
     pageTitle: actor.name ?? actor.handle,

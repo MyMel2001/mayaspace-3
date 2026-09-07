@@ -74,7 +74,11 @@ export class Store {
     this.root = new QuickDB<AnyRecord>({
       filePath: config.dbPath,
       table: "mayaspace_meta",
-      normalKeys: false,
+      // Treat keys literally: Quick.DB with normalKeys=false splits keys on
+      // ".", which mangles keys containing remote actor IRIs
+      // ("https://mastodon.social/users/…" → nested objects under
+      // "https://mastodon") and breaks remote-actor caching + follow state.
+      normalKeys: true,
     });
     await this.root.init();
     for (const t of TABLES) {
@@ -87,9 +91,80 @@ export class Store {
         (this as unknown as Record<string, QuickDB<never>>)[t] = tbl;
       }
     }
+    await this.migrateLegacyDottedKeys();
+  }
+
+  /**
+   * One-time migration from Quick.DB's key mangling eras:
+   *  1. normalKeys=false: keys containing "." were split into nested objects
+   *     (row "https://mastodon" → {"social/users/x": record}).
+   *  2. Brief normalKeys=true interlude: literal rows like
+   *     "https://mastodon.social/users/x", plus junk "{}" rows left by
+   *     Quick.DB's delete() which ignores normalKeys and always splits on ".".
+   * Everything is re-keyed through Store.key() (dot-free base64url) and the
+   * junk rows are removed.
+   */
+  private async migrateLegacyDottedKeys(): Promise<void> {
+    const migrated = (await this.kv.get("storeKeyMigrationDone")) === true;
+    if (migrated) return;
+
+    const isRecord: Record<string, (v: Record<string, unknown>) => boolean> = {
+      remoteActors: (v) => typeof v.actorId === "string" && typeof v.handle === "string",
+      remoteFollows: (v) => typeof v.localHandle === "string" && typeof v.remoteActorId === "string",
+      likes: (v) => typeof v.postId === "string" && typeof v.liker === "string",
+      commentLikes: (v) => typeof v.commentId === "string" && typeof v.liker === "string",
+    };
+
+    for (const [t, looksLikeRecord] of Object.entries(isRecord)) {
+      const tbl = this.root.table(t) as QuickDB<AnyRecord>;
+      const rows = await tbl.all<AnyRecord>();
+      const rebuilt: { id: string; value: AnyRecord }[] = [];
+      const flatten = (prefix: string, node: unknown): void => {
+        if (node !== null && typeof node === "object" && !Array.isArray(node)) {
+          const obj = node as Record<string, unknown>;
+          if (looksLikeRecord(obj)) {
+            rebuilt.push({ id: prefix, value: obj as unknown as AnyRecord });
+            return;
+          }
+          for (const [k, v] of Object.entries(obj)) flatten(`${prefix}.${k}`, v);
+        }
+      };
+      for (const row of rows) {
+        const before = rebuilt.length;
+        flatten(row.id, row.value);
+        if (rebuilt.length > before) {
+          // Remove legacy wrapper rows. Bypass QuickDB.delete (it dot-splits
+          // even in normalKeys mode) — go straight to the SQLite driver.
+          await this.root.driver.deleteRowByKey(t, row.id);
+        }
+      }
+      // Drop junk "{}" rows created by past QuickDB.delete dot-splitting.
+      for (const row of rows) {
+        if (row.value !== null && typeof row.value === "object" && Object.keys(row.value).length === 0) {
+          await this.root.driver.deleteRowByKey(t, row.id);
+        }
+      }
+      for (const { id, value } of rebuilt) {
+        const record = { ...(value as unknown as Record<string, unknown>), id: Store.key(id) };
+        await tbl.set(Store.key(id), record as AnyRecord);
+      }
+      if (rebuilt.length > 0) {
+        console.log(`[store] migrated ${rebuilt.length} row(s) in "${t}"`);
+      }
+    }
+    await this.kvSet("storeKeyMigrationDone", true);
   }
 
   // ── generic helpers ───────────────────────────────────────────────────────
+
+  /**
+   * Dot-free storage key. Quick.DB splits keys on "." (get/set with
+   * normalKeys=false, and ALWAYS for delete()) — so every key this store
+   * writes is encoded to base64url, which cannot contain a dot.
+   */
+  static key(raw: string): string {
+    return Buffer.from(raw, "utf8").toString("base64url");
+  }
 
   /** Loads every row of a table (small-instance scale: fine, single-digit ms). */
   private async all<T extends AnyRecord>(table: QuickDB<T>): Promise<T[]> {
@@ -98,11 +173,11 @@ export class Store {
   }
 
   async kvGet(key: string): Promise<string | number | boolean | null> {
-    return this.kv.get(key);
+    return this.kv.get(Store.key(key));
   }
 
   async kvSet(key: string, value: string | number | boolean): Promise<void> {
-    await this.kv.set(key, value);
+    await this.kv.set(Store.key(key), value);
   }
 
   // ── users ─────────────────────────────────────────────────────────────────
@@ -375,11 +450,11 @@ export class Store {
   }
 
   async upsertRemoteFollow(f: RemoteFollowRecord): Promise<void> {
-    await this.remoteFollows.set(Store.remoteFollowKey(f.localHandle, f.remoteActorId), f);
+    await this.remoteFollows.set(Store.key(Store.remoteFollowKey(f.localHandle, f.remoteActorId)), f);
   }
 
   async getRemoteFollow(localHandle: string, actorId: string): Promise<RemoteFollowRecord | null> {
-    return this.remoteFollows.get(Store.remoteFollowKey(localHandle, actorId));
+    return this.remoteFollows.get(Store.key(Store.remoteFollowKey(localHandle, actorId)));
   }
 
   async listRemoteFollows(localHandle: string): Promise<RemoteFollowRecord[]> {
@@ -393,7 +468,7 @@ export class Store {
   }
 
   async deleteRemoteFollow(localHandle: string, actorId: string): Promise<void> {
-    await this.remoteFollows.delete(Store.remoteFollowKey(localHandle, actorId));
+    await this.remoteFollows.delete(Store.key(Store.remoteFollowKey(localHandle, actorId)));
   }
 
   async countLocalFollowersOf(actorId: string): Promise<number> {
@@ -403,11 +478,11 @@ export class Store {
   // ── remote actors ─────────────────────────────────────────────────────────
 
   async upsertRemoteActor(a: RemoteActorRecord): Promise<void> {
-    await this.remoteActors.set(a.actorId, a);
+    await this.remoteActors.set(Store.key(a.actorId), a);
   }
 
   async getRemoteActor(actorId: string): Promise<RemoteActorRecord | null> {
-    return this.remoteActors.get(actorId);
+    return this.remoteActors.get(Store.key(actorId));
   }
 
   async countRemoteActors(): Promise<number> {
@@ -450,10 +525,10 @@ export class Store {
 
   /** Adds/refreshes a "remote actor follows local user" record. */
   async addLocalFollower(localHandle: string, remoteActorId: string): Promise<void> {
-    const id = Store.remoteFollowKey(localHandle, remoteActorId);
+    const id = Store.key(Store.remoteFollowKey(localHandle, remoteActorId));
     const existing = await this.remoteFollows.get(id);
     await this.remoteFollows.set(id, {
-      id,
+      id: Store.remoteFollowKey(localHandle, remoteActorId),
       localHandle,
       remoteActorId,
       state: "active",
@@ -462,7 +537,7 @@ export class Store {
   }
 
   async removeLocalFollower(localHandle: string, remoteActorId: string): Promise<void> {
-    await this.remoteFollows.delete(Store.remoteFollowKey(localHandle, remoteActorId));
+    await this.remoteFollows.delete(Store.key(Store.remoteFollowKey(localHandle, remoteActorId)));
   }
 
   private mayaUserBase(handle: string): string {
@@ -478,7 +553,7 @@ export class Store {
   }
 
   async likePost(postId: string, liker: string, remoteActorId: string | null): Promise<void> {
-    await this.likes.set(Store.likeKey(postId, liker), {
+    await this.likes.set(Store.key(Store.likeKey(postId, liker)), {
       id: Store.likeKey(postId, liker),
       postId,
       liker,
@@ -488,11 +563,11 @@ export class Store {
   }
 
   async unlikePost(postId: string, liker: string): Promise<void> {
-    await this.likes.delete(Store.likeKey(postId, liker));
+    await this.likes.delete(Store.key(Store.likeKey(postId, liker)));
   }
 
   async hasLiked(postId: string, liker: string): Promise<boolean> {
-    return this.likes.has(Store.likeKey(postId, liker));
+    return this.likes.has(Store.key(Store.likeKey(postId, liker)));
   }
 
   async likeCount(postId: string): Promise<number> {
@@ -516,7 +591,7 @@ export class Store {
   }
 
   async likeComment(commentId: string, liker: string, remoteActorId: string | null): Promise<void> {
-    await this.commentLikes.set(Store.commentLikeKey(commentId, liker), {
+    await this.commentLikes.set(Store.key(Store.commentLikeKey(commentId, liker)), {
       id: Store.commentLikeKey(commentId, liker),
       commentId,
       liker,
@@ -526,11 +601,11 @@ export class Store {
   }
 
   async unlikeComment(commentId: string, liker: string): Promise<void> {
-    await this.commentLikes.delete(Store.commentLikeKey(commentId, liker));
+    await this.commentLikes.delete(Store.key(Store.commentLikeKey(commentId, liker)));
   }
 
   async hasLikedComment(commentId: string, liker: string): Promise<boolean> {
-    return this.commentLikes.has(Store.commentLikeKey(commentId, liker));
+    return this.commentLikes.has(Store.key(Store.commentLikeKey(commentId, liker)));
   }
 
   async commentLikeCount(commentId: string): Promise<number> {
