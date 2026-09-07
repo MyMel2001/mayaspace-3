@@ -21,7 +21,12 @@ import { config } from "../../config.js";
 
 const router = Router();
 
-router.post("/posts", requireLogin, csrfGuard, postLimiter, async (req: Request, res: Response) => {
+// attachmentsUpload runs BEFORE the CSRF guard so multipart submissions (e.g.
+// stale cached pages that still carry enctype="multipart/form-data" on the
+// composer) get their body parsed and the embedded token verified. Urlencoded
+// submissions pass through multer untouched; any files riding along directly
+// are ignored — attachments are meant to arrive via the AJAX /uploads flow.
+router.post("/posts", requireLogin, attachmentsUpload, csrfGuard, postLimiter, async (req: Request, res: Response) => {
   const body = req.body as Record<string, unknown>;
   const text = typeof body.body === "string" ? body.body : "";
   const visibility = body.visibility === "friends" ? "friends" : "public";
