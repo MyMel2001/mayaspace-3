@@ -1,0 +1,30 @@
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="logo" href="/"><span class="logo-maya">maya</span><span class="logo-space">SPACE</span></a>
+    <form class="topbar-search" action="/search" method="get">
+      <input type="search" name="q" placeholder="Search friends…" value="" maxlength="100">
+    </form>
+    <nav class="topbar-nav">
+      <% if (typeof user !== "undefined" && user) { %>
+        <a href="/">Home</a>
+        <a href="/friends">Friends</a>
+        <a href="/fediverse">Fediverse</a>
+        <a href="/notifications" class="notif-link">Alerts<% if (unreadNotifications > 0) { %><span class="notif-badge"><%= unreadNotifications %></span><% } %></a>
+        <% if (user.role === "admin" || user.role === "moderator") { %><a href="/admin">Admin</a><% } %>
+        <a href="/u/<%= user.handle %>">My Space</a>
+        <form action="/logout" method="post" class="inline-form"><input type="hidden" name="csrf" value="<%= csrf %>"><button type="submit" class="linklike">Log out</button></form>
+      <% } else { %>
+        <a href="/">Home</a>
+        <a href="/fediverse">Fediverse</a>
+        <a href="/login">Log in</a>
+        <a href="/register" class="btn-join">Join!</a>
+      <% } %>
+    </nav>
+  </div>
+</div>
+<div class="marquee-strip"><div class="marquee-inner">★ <%= siteName %> — <%= siteTagline %> ★ Now federating with the entire fediverse ★ Your profile, your CSS, your rules ★ No pop-up ads, promise ★</div></div>
+<% if (typeof flash !== "undefined") { const bag = flash; %>
+  <% if (bag.success) { %><div class="flash flash-success"><%= bag.success.text %></div><% } %>
+  <% if (bag.error) { %><div class="flash flash-error"><%= bag.error.text %></div><% } %>
+  <% if (bag.info) { %><div class="flash flash-info"><%= bag.info.text %></div><% } %>
+<% } %>

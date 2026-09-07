@@ -1,0 +1,99 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page">
+  <div class="page-main">
+    <section class="panel">
+      <h1 class="panel-title">🛠 Admin panel</h1>
+      <div class="stat-box">
+        <div class="stat"><span class="stat-num"><%= stats.users %></span><span class="stat-label">members</span></div>
+        <div class="stat"><span class="stat-num"><%= stats.posts %></span><span class="stat-label">posts</span></div>
+        <div class="stat"><span class="stat-num"><%= stats.comments %></span><span class="stat-label">comments</span></div>
+        <div class="stat"><span class="stat-num"><%= stats.remoteActors %></span><span class="stat-label">remote actors</span></div>
+        <div class="stat"><span class="stat-num"><%= stats.friendEdges %></span><span class="stat-label">friendships</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Suspend / unsuspend a member</h2>
+      <form method="post" action="/admin/suspend" class="row-form">
+        <input type="hidden" name="csrf" value="<%= csrf %>">
+        <input type="text" name="handle" placeholder="username" pattern="[a-z0-9_]{3,20}" required class="grow">
+        <input type="text" name="reason" placeholder="reason (logged)" class="grow">
+        <button type="submit" class="btn btn-danger">Suspend</button>
+      </form>
+      <form method="post" action="/admin/unsuspend" class="row-form">
+        <input type="hidden" name="csrf" value="<%= csrf %>">
+        <input type="text" name="handle" placeholder="username" pattern="[a-z0-9_]{3,20}" required class="grow">
+        <button type="submit" class="btn">Unsuspend</button>
+      </form>
+      <% if (isAdmin) { %>
+      <h2 class="panel-title">Change role</h2>
+      <form method="post" action="/admin/role" class="row-form">
+        <input type="hidden" name="csrf" value="<%= csrf %>">
+        <input type="text" name="handle" placeholder="username" pattern="[a-z0-9_]{3,20}" required class="grow">
+        <select name="role"><option value="user">user</option><option value="moderator">moderator</option><option value="admin">admin</option></select>
+        <button type="submit" class="btn btn-primary">Set role</button>
+      </form>
+      <% } %>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Fediverse moderation</h2>
+      <form method="post" action="/admin/block-remote" class="row-form">
+        <input type="hidden" name="csrf" value="<%= csrf %>">
+        <input type="text" name="actorId" placeholder="https://server.example/users/who" required class="grow">
+        <button type="submit" class="btn btn-danger">Block actor</button>
+      </form>
+      <form method="post" action="/admin/unblock-remote" class="row-form">
+        <input type="hidden" name="csrf" value="<%= csrf %>">
+        <input type="text" name="actorId" placeholder="https://server.example/users/who" required class="grow">
+        <button type="submit" class="btn">Unblock actor</button>
+      </form>
+      <% if (blockedActors.length > 0) { %>
+        <ul class="actor-list">
+          <% for (const a of blockedActors) { %><li><code><%= a.handle %></code> <span class="badge badge-danger">blocked</span></li><% } %>
+        </ul>
+      <% } %>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Background jobs</h2>
+      <table class="jobs-table">
+        <thead><tr><th>job</th><th>every</th><th>last run</th><th>status</th><th></th></tr></thead>
+        <tbody>
+        <% for (const j of jobs) { %>
+          <tr>
+            <td><code><%= j.name %></code></td>
+            <td><%= Math.round(j.intervalMs / 60000) %> min</td>
+            <td><%= j.lastRunAt ? new Date(j.lastRunAt).toISOString().replace("T", " ").slice(0, 19) : "never" %></td>
+            <td><%= j.running ? "running…" : (j.lastError ? "⚠ " + j.lastError : "ok") %></td>
+            <td>
+              <% if (isAdmin) { %>
+              <form method="post" action="/admin/run-job" class="inline-form">
+                <input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="job" value="<%= j.name %>">
+                <button type="submit" class="linklike">run now</button>
+              </form>
+              <% } %>
+            </td>
+          </tr>
+        <% } %>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Moderation log</h2>
+      <% if (modLog.length === 0) { %><p class="muted">All quiet on the moderation front.</p><% } %>
+      <table class="jobs-table">
+        <tbody>
+        <% for (const m of modLog) { %>
+          <tr><td><%= m.createdAt.slice(0, 19).replace("T", " ") %></td><td><code><%= m.action %></code></td><td><%= m.details %></td><td>by <strong><%= m.actorHandle %></strong> → <code><%= m.target %></code></td></tr>
+        <% } %>
+        </tbody>
+      </table>
+    </section>
+  </div>
+</div>
+
+<%- include("partials/foot") %>

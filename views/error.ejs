@@ -1,0 +1,27 @@
+<%- include("partials/head", {
+  pageTitle: typeof pageTitle !== "undefined" ? pageTitle : "Error",
+  siteName: typeof siteName !== "undefined" ? siteName : "MayaSpace",
+  siteTagline: typeof siteTagline !== "undefined" ? siteTagline : "",
+  profileThemeCss: typeof profileThemeCss !== "undefined" ? profileThemeCss : "",
+}) %>
+<%- include("partials/nav", {
+  user: typeof user !== "undefined" ? user : null,
+  csrf: typeof csrf !== "undefined" ? csrf : "",
+  unreadNotifications: typeof unreadNotifications !== "undefined" ? unreadNotifications : 0,
+  siteName: typeof siteName !== "undefined" ? siteName : "MayaSpace",
+  siteTagline: typeof siteTagline !== "undefined" ? siteTagline : "",
+  flash: {},
+}) %>
+
+<div class="page page-narrow">
+  <section class="panel error-panel">
+    <h1 class="panel-title">:( <%= pageTitle %></h1>
+    <p class="error-message"><%= message %></p>
+    <p><a href="/" class="btn btn-primary">← Back home</a></p>
+  </section>
+</div>
+
+<%- include("partials/foot", {
+  siteName: typeof siteName !== "undefined" ? siteName : "MayaSpace",
+  siteTagline: typeof siteTagline !== "undefined" ? siteTagline : "",
+}) %>

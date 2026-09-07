@@ -1,0 +1,1 @@
+mkdir -p ./logs; LOG="./logs/mayaspace-$(date +%s).log"; nohup node --harmony-temporal --import tsx src/index.ts > "$LOG" 2>&1 & echo "MayaSpace started in background (pid $!) — log: $LOG"

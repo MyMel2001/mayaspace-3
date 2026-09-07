@@ -1,0 +1,60 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page page-narrow">
+  <section class="panel">
+    <h1 class="panel-title">Add a friend</h1>
+    <form method="post" action="/friends/request" class="row-form">
+      <input type="hidden" name="csrf" value="<%= csrf %>">
+      <input type="text" name="handle" placeholder="username" pattern="[a-z0-9_]{3,20}" required class="grow">
+      <button type="submit" class="btn btn-primary">Send request</button>
+    </form>
+  </section>
+
+  <% if (incoming.length > 0) { %>
+  <section class="panel">
+    <h2 class="panel-title">Pending requests <span class="badge badge-alert"><%= incoming.length %></span></h2>
+    <% for (const r of incoming) { %>
+      <div class="friend-row">
+        <a href="/u/<%= r.handle %>" class="friend-name">@<%= r.handle %></a>
+        <span class="muted"><%= r.timeAgo %></span>
+        <form method="post" action="/friends/accept" class="inline-form"><input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="id" value="<%= r.id %>"><button type="submit" class="btn btn-primary">Accept</button></form>
+        <form method="post" action="/friends/decline" class="inline-form"><input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="id" value="<%= r.id %>"><button type="submit" class="btn">Decline</button></form>
+      </div>
+    <% } %>
+  </section>
+  <% } %>
+
+  <section class="panel">
+    <h2 class="panel-title">My Friends (<%= friends.length %>)</h2>
+    <% if (friends.length === 0) { %><p class="muted">No friends yet. Try <a href="/search">searching</a> for people!</p><% } %>
+    <div class="top8-grid">
+      <% for (const f of friends) { %>
+        <div class="top8-cell">
+          <a href="/u/<%= f.handle %>">
+            <% if (f.avatarUrl) { %><img src="<%= f.avatarUrl %>" alt="" loading="lazy"><% } else { %><span class="avatar-fallback"><%= f.displayName.slice(0, 1).toUpperCase() %></span><% } %>
+            <span><%= f.displayName %><% if (f.top8) { %> ★<% } %></span>
+          </a>
+          <form method="post" action="/friends/remove" class="inline-form confirm-delete" data-confirm="Remove <%= f.handle %> from your friends?">
+            <input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="handle" value="<%= f.handle %>">
+            <button type="submit" class="linklike danger">remove</button>
+          </form>
+        </div>
+      <% } %>
+    </div>
+  </section>
+
+  <% if (outgoing.length > 0) { %>
+  <section class="panel">
+    <h2 class="panel-title">Sent requests</h2>
+    <% for (const r of outgoing) { %>
+      <div class="friend-row">
+        <a href="/u/<%= r.handle %>" class="friend-name">@<%= r.handle %></a>
+        <span class="muted">sent <%= r.timeAgo %> ⏳</span>
+      </div>
+    <% } %>
+  </section>
+  <% } %>
+</div>
+
+<%- include("partials/foot") %>

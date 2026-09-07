@@ -1,0 +1,22 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page page-narrow">
+  <section class="panel welcome-panel">
+    <h1 class="panel-title">Welcome to your Space! 🎉</h1>
+    <p>Your account is ready and your fediverse actor was provisioned automatically —
+       people on other servers can already find you as
+       <code><%= user ? user.handle + "@" + instanceHost : "you@" + instanceHost %></code>
+       once your instance is public.</p>
+    <ul class="welcome-list">
+      <li>✨ <a href="/settings">Customize your profile</a> — theme color, bio, and safe custom CSS</li>
+      <li>👥 <a href="/search">Find friends</a> and send friend requests</li>
+      <li>🌐 <a href="/fediverse">Browse the fediverse</a> and follow remote accounts</li>
+      <li>🖼 Post updates with compressed image attachments</li>
+      <li>▶️ Paste YouTube, Vimeo, SoundCloud or Bandcamp links — they auto-embed</li>
+    </ul>
+    <a href="/" class="btn btn-primary btn-block">Take me to the feed</a>
+  </section>
+</div>
+
+<%- include("partials/foot") %>

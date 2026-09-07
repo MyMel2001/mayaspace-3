@@ -1,0 +1,19 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page page-narrow">
+  <section class="panel auth-panel">
+    <h1 class="panel-title">Log in</h1>
+    <form method="post" action="/login" class="stack-form">
+      <input type="hidden" name="csrf" value="<%= csrf %>">
+      <label for="login-handle">Username</label>
+      <input type="text" id="login-handle" name="handle" required autofocus autocomplete="username">
+      <label for="login-password">Password</label>
+      <input type="password" id="login-password" name="password" required autocomplete="current-password">
+      <button type="submit" class="btn btn-primary btn-block">Enter my Space</button>
+    </form>
+    <p class="auth-alt">No account yet? <a href="/register">Join <%= siteName %></a></p>
+  </section>
+</div>
+
+<%- include("partials/foot") %>

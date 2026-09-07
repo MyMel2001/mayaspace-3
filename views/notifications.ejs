@@ -1,0 +1,33 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page page-narrow">
+  <section class="panel">
+    <div class="panel-title-row">
+      <h1 class="panel-title">Alerts <% if (unread > 0) { %><span class="badge badge-alert"><%= unread %> new</span><% } %></h1>
+      <% if (notifications.length > 0) { %>
+        <form method="post" action="/notifications/read" class="inline-form">
+          <input type="hidden" name="csrf" value="<%= csrf %>">
+          <button type="submit" class="btn">Mark all read</button>
+        </form>
+      <% } %>
+    </div>
+
+    <% if (notifications.length === 0) { %>
+      <div class="empty-state"><p>No alerts yet. Go make some friends! 👋</p></div>
+    <% } %>
+    <% for (const n of notifications) { %>
+      <div class="notif-row <%= n.read ? "" : "notif-unread" %>">
+        <% if (n.actor && n.actor.avatarUrl) { %><img src="<%= n.actor.avatarUrl %>" alt="" width="32" height="32" loading="lazy"><% } %>
+        <div class="notif-main">
+          <% if (n.actor) { %><a href="<%= n.actor.profileUrl %>" class="notif-actor"><%= n.actor.displayName %></a><% } %>
+          <a href="<%= n.link %>"><span class="notif-msg"><%- n.message %></span></a>
+          <span class="muted"><%= n.timeAgo %></span>
+        </div>
+        <% if (!n.read) { %><span class="notif-dot" aria-label="unread"></span><% } %>
+      </div>
+    <% } %>
+  </section>
+</div>
+
+<%- include("partials/foot") %>

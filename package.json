@@ -1,0 +1,49 @@
+{
+  "name": "mayaspace",
+  "version": "1.0.0",
+  "description": "MayaSpace — a mid-2000s MySpace clone, federated over ActivityPub.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "start": "node --harmony-temporal --import tsx src/index.ts",
+    "dev": "node --harmony-temporal --watch --import tsx src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@fedify/express": "^2.3.6",
+    "@fedify/fedify": "^2.3.6",
+    "@fedify/sqlite": "^2.3.6",
+    "@fedify/vocab": "^2.3.6",
+    "@logtape/logtape": "^2.3.3",
+    "better-sqlite3": "^13.0.3",
+    "connect-sqlite3": "^0.9.18",
+    "dotenv": "^17.4.2",
+    "ejs": "^6.0.1",
+    "express": "^5.2.1",
+    "express-flash": "^0.0.2",
+    "express-rate-limit": "^8.7.0",
+    "express-session": "^1.19.0",
+    "helmet": "^8.3.0",
+    "multer": "^2.3.0",
+    "quick.db": "^9.1.7",
+    "sanitize-html": "^2.17.7",
+    "sharp": "^0.35.4",
+    "tsx": "^4.23.13"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/connect-sqlite3": "^0.9.6",
+    "@types/ejs": "^3.1.5",
+    "@types/express": "^5.0.6",
+    "@types/express-flash": "^0.0.5",
+    "@types/express-session": "^1.19.0",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^26.4.1",
+    "@types/sanitize-html": "^2.16.1",
+    "typescript": "^7.0.2"
+  }
+}

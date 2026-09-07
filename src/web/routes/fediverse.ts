@@ -1,0 +1,157 @@
+/**
+ * Fediverse bridging UI: remote actor lookup/profiles, follow/unfollow,
+ * the local "fediverse" feed of mirrored remote posts.
+ */
+import { Router, type Request, type Response } from "express";
+import { store } from "../../store.js";
+import { buildPostViews } from "../../services/render.js";
+import { ensureRemoteActor, resolveRemoteActor } from "../../fediverse/remote.js";
+import { sendFollow, sendUnfollow } from "../../fediverse/federation.js";
+import { getFederation } from "../../app.js";
+import { csrfGuard, requireLogin } from "../../security/auth.js";
+import { commonLocals, flash } from "../helpers.js";
+import { escapeHtml, isoNow, newId, stripHtml } from "../../util.js";
+import { sanitizePostHtml } from "../../security/sanitize.js";
+import type { PostRecord, RemoteActorRecord } from "../../types.js";
+
+const router = Router();
+
+router.get("/fediverse", async (req: Request, res: Response) => {
+  // Mirrored remote posts feed.
+  const posts = await store.remoteFeed(30);
+  const views = await buildPostViews(posts, req.user);
+  const remoteActors = await store.listKnownRemoteActors(20);
+  res.render("fediverse", {
+    ...(await commonLocals(req, res)),
+    pageTitle: "Fediverse",
+    posts: views,
+    remoteActors: remoteActors.map((a) => ({
+      handle: a.handle,
+      name: a.name ?? a.handle,
+      avatarUrl: a.iconUrl,
+      actorId: a.actorId,
+      suspended: a.suspended,
+    })),
+  });
+});
+
+router.get("/fediverse/actor", async (req: Request, res: Response) => {
+  const actorRef = typeof req.query.actor === "string" ? req.query.actor : "";
+  if (actorRef === "") {
+    res.redirect("/fediverse");
+    return;
+  }
+  const federation = getFederation();
+  const actor = federation
+    ? await resolveRemoteActor(federation, actorRef)
+    : await store.getRemoteActor(actorRef);
+  if (!actor) {
+    res.status(404).render("error", {
+      ...(await commonLocals(req, res)),
+      pageTitle: "Actor not found",
+      message: "That fediverse account couldn't be resolved. Check the handle and try again.",
+    });
+    return;
+  }
+  const posts = await store.postsByRemoteActor(actor.actorId);
+  const views = await buildPostViews(posts, req.user);
+  const following =
+    req.user !== undefined && (await store.getRemoteFollow(req.user.handle, actor.actorId)) !== null;
+  res.render("remoteActor", {
+    ...(await commonLocals(req, res)),
+    pageTitle: actor.name ?? actor.handle,
+    actor: {
+      actorId: actor.actorId,
+      handle: actor.handle,
+      name: actor.name ?? actor.handle,
+      bioHtml: actor.bioHtml,
+      avatarUrl: actor.iconUrl,
+      url: actor.url,
+      suspended: actor.suspended,
+    },
+    posts: views,
+    following,
+  });
+});
+
+router.post("/fediverse/follow", requireLogin, csrfGuard, async (req: Request, res: Response) => {
+  const body = req.body as Record<string, unknown>;
+  const actorRef = typeof body.actor === "string" ? body.actor : "";
+  const federation = getFederation();
+  if (!federation) {
+    flash(req, "error", "Federation is not available right now.");
+    res.redirect("/fediverse");
+    return;
+  }
+  const remote: RemoteActorRecord | null = await ensureRemoteActor(
+    federation,
+    actorRef,
+  );
+  if (!remote) {
+    flash(req, "error", "Couldn't find that fediverse account.");
+    res.redirect("/fediverse");
+    return;
+  }
+  if (remote.suspended) {
+    flash(req, "error", "That account is blocked on this server.");
+    res.redirect("/fediverse");
+    return;
+  }
+  const ok = await sendFollow(federation, req.user!.handle, remote);
+  flash(
+    req,
+    ok ? "success" : "error",
+    ok
+      ? `Follow request sent to ${escapeHtml(remote.handle)}! It'll show up as "pending" until they respond.`
+      : "Couldn't deliver the follow request.",
+  );
+  res.redirect(req.get("referer") ?? "/fediverse");
+});
+
+router.post("/fediverse/unfollow", requireLogin, csrfGuard, async (req: Request, res: Response) => {
+  const body = req.body as Record<string, unknown>;
+  const actorId = typeof body.actorId === "string" ? body.actorId : "";
+  const remote = await store.getRemoteActor(actorId);
+  const federation = getFederation();
+  if (!remote || !federation) {
+    flash(req, "error", "Remote account not found.");
+    res.redirect("/fediverse");
+    return;
+  }
+  await sendUnfollow(federation, req.user!.handle, remote);
+  flash(req, "info", `Unfollowed ${escapeHtml(remote.handle)}.`);
+  res.redirect(req.get("referer") ?? "/fediverse");
+});
+
+/** Remote-post mirroring entry point used when we fetch an unknown note URL. */
+export async function mirrorRemoteNote(
+  remote: RemoteActorRecord,
+  apId: string,
+  content: string,
+  published: string | null,
+  url: string | null,
+): Promise<PostRecord> {
+  const existing = await store.getPostByApId(apId);
+  if (existing) return existing;
+  const html = sanitizePostHtml(content);
+  const post: PostRecord = {
+    id: newId(),
+    authorHandle: remote.handle,
+    authorType: "remote",
+    remoteActorId: remote.actorId,
+    apId,
+    url,
+    html,
+    textContent: stripHtml(html).slice(0, 500),
+    visibility: "public",
+    createdAt: published ?? isoNow(),
+    attachmentIds: [],
+    inReplyToApId: null,
+    inReplyToLocalPostId: null,
+    deleted: false,
+  };
+  await store.createPost(post);
+  return post;
+}
+
+export default router;

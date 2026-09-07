@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= typeof pageTitle !== "undefined" && pageTitle ? pageTitle + " · " : "" %><%= siteName %></title>
+  <link rel="stylesheet" href="/css/mayaspace.css">
+  <link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<%- typeof profileThemeCss !== "undefined" && profileThemeCss ? '<style>' + profileThemeCss + '</style>' : '' %>

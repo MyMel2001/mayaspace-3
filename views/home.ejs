@@ -1,0 +1,64 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page">
+  <div class="page-main">
+    <% if (user) { %>
+    <section class="panel composer-panel">
+      <h2 class="panel-title">What's on your mind?</h2>
+      <form method="post" action="/posts" enctype="multipart/form-data" id="composer">
+        <input type="hidden" name="csrf" value="<%= csrf %>">
+        <textarea name="body" id="composer-body" rows="4" maxlength="10000" placeholder="Post something… (@mention friends, paste YouTube links for auto-embeds)" required></textarea>
+        <div class="composer-row">
+          <label class="file-label">🖼 Attach
+            <input type="file" name="files" id="composer-files" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" multiple>
+          </label>
+          <select name="visibility" class="visibility-select">
+            <option value="public">🌐 Public</option>
+            <option value="friends">🔒 Friends only</option>
+          </select>
+          <button type="submit" class="btn btn-primary">POST!</button>
+        </div>
+        <div class="composer-previews" id="composer-previews"></div>
+        <input type="hidden" name="attachments" id="composer-attachment-ids" value="">
+      </form>
+    </section>
+    <% } %>
+
+    <section class="feed">
+      <% if (posts.length === 0) { %>
+        <div class="empty-state">
+          <p><strong>No posts yet.</strong></p>
+          <p>Be the first to claim this space. ✨</p>
+        </div>
+      <% } %>
+      <% for (const post of posts) { %>
+        <%- include("partials/post", { post }) %>
+      <% } %>
+    </section>
+  </div>
+
+  <aside class="page-side">
+    <div class="panel">
+      <h2 class="panel-title"><%= siteName %></h2>
+      <div class="stat-box">
+        <div class="stat"><span class="stat-num"><%= stats.users %></span><span class="stat-label">members</span></div>
+        <div class="stat"><span class="stat-num"><%= stats.posts %></span><span class="stat-label">posts</span></div>
+        <div class="stat"><span class="stat-num"><%= stats.comments %></span><span class="stat-label">comments</span></div>
+        <div class="stat"><span class="stat-num"><%= stats.remoteActors %></span><span class="stat-label">fediverse</span></div>
+      </div>
+      <% if (!user) { %>
+        <p class="side-cta">New here?</p>
+        <a href="/register" class="btn btn-primary btn-block">Create your Space</a>
+        <a href="/login" class="btn btn-block">Log in</a>
+      <% } else { %>
+        <p class="side-cta">Quick links</p>
+        <a href="/u/<%= user.handle %>" class="btn btn-block">My profile</a>
+        <a href="/settings" class="btn btn-block">Customize my Space</a>
+        <a href="/friends" class="btn btn-block">Friends</a>
+      <% } %>
+    </div>
+  </aside>
+</div>
+
+<%- include("partials/foot") %>

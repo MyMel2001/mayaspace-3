@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# runtime data (database, uploads)
+data/
+
+# logs
+logs/
+*.log
+
+# environment — contains secrets; keep .env.example in VCS
+.env

@@ -1,0 +1,43 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page">
+  <div class="page-main">
+    <section class="panel">
+      <h1 class="panel-title">🌐 Fediverse lookup</h1>
+      <p class="muted">Enter a handle (<code>user@server</code>) or an actor URL to view their profile from here.</p>
+      <form method="get" action="/fediverse/actor" class="row-form">
+        <input type="text" name="actor" placeholder="someone@example.com" required class="grow">
+        <button type="submit" class="btn btn-primary">Look up</button>
+      </form>
+    </section>
+
+    <section class="feed">
+      <h2 class="panel-title">Mirrored remote posts</h2>
+      <% if (posts.length === 0) { %><div class="empty-state"><p>Nothing from the fediverse yet. Follow someone above!</p></div><% } %>
+      <% for (const post of posts) { %>
+        <%- include("partials/post", { post }) %>
+      <% } %>
+    </section>
+  </div>
+
+  <aside class="page-side">
+    <div class="panel">
+      <h2 class="panel-title">Known fediverse accounts</h2>
+      <% if (remoteActors.length === 0) { %><p class="muted">None discovered yet.</p><% } %>
+      <ul class="actor-list">
+        <% for (const a of remoteActors) { %>
+          <li>
+            <a href="/fediverse/actor?actor=<%= encodeURIComponent(a.actorId) %>">
+              <% if (a.avatarUrl) { %><img src="<%= a.avatarUrl %>" alt="" width="24" height="24"><% } %>
+              <%= a.name %>
+            </a>
+            <% if (a.suspended) { %><span class="badge badge-danger">blocked</span><% } %>
+          </li>
+        <% } %>
+      </ul>
+    </div>
+  </aside>
+</div>
+
+<%- include("partials/foot") %>

@@ -1,0 +1,42 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page page-narrow">
+  <section class="panel">
+    <h1 class="panel-title">Customize my Space</h1>
+    <form method="post" action="/settings" class="stack-form">
+      <input type="hidden" name="csrf" value="<%= csrf %>">
+      <label for="set-display">Display name</label>
+      <input type="text" id="set-display" name="displayName" maxlength="50" value="<%= user.displayName %>" required>
+      <label for="set-bio">Bio <span class="muted">(limited HTML allowed — it gets sanitized)</span></label>
+      <textarea id="set-bio" name="bio" rows="3" maxlength="2000"><%= user.bioHtml ? user.bioHtml.replace(/<[^>]*>/g, "") : "" %></textarea>
+      <label for="set-color">Theme color</label>
+      <input type="color" id="set-color" name="themeColor" value="<%= user.themeColor %>" maxlength="9">
+      <label for="set-css">Custom CSS <span class="muted">(sanitized: no scripts, no @imports, no url() except https images in background)</span></label>
+      <textarea id="set-css" name="customCss" rows="8" spellcheck="false" placeholder=".profile-hero { background: repeating-linear-gradient(45deg, #f0f, #ff0 10px); }"><%= user.customCss %></textarea>
+      <button type="submit" class="btn btn-primary btn-block">Save my Space</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h1 class="panel-title">Avatar</h1>
+    <div class="avatar-preview">
+      <% if (user.avatar) { %><img src="/media/<%= user.avatar %>" alt="" width="72" height="72"><% } else { %><span class="avatar-fallback avatar-lg"><%= user.displayName.slice(0, 1).toUpperCase() %></span><% } %>
+    </div>
+    <form method="post" action="/settings/avatar" enctype="multipart/form-data" class="stack-form">
+      <input type="hidden" name="csrf" value="<%= csrf %>">
+      <label for="set-avatar">Upload new avatar <span class="muted">(JPEG/PNG/WebP/GIF/AVIF, max <%= maxUploadMb %> MB — auto-compressed to WebP)</span></label>
+      <input type="file" id="set-avatar" name="avatar" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" required>
+      <button type="submit" class="btn btn-block">Upload avatar</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h1 class="panel-title">Account</h1>
+    <p><strong><%= user.handle %></strong> · <%= user.email %> · role: <%= user.role %></p>
+    <p><a href="/password" class="btn">Change password</a></p>
+    <p class="muted">Your fediverse actor: <code><%= user.handle %>@<%= instanceHost %></code></p>
+  </section>
+</div>
+
+<%- include("partials/foot") %>

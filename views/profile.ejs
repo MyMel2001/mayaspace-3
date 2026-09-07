@@ -1,0 +1,71 @@
+<%- include("partials/head", { profileThemeCss: profileUser.customCss }) %>
+<%- include("partials/nav") %>
+
+<div class="page">
+  <div class="page-main">
+    <%- profileUser.themeColor ? '<section class="panel profile-hero" style="--profile-accent:' + profileUser.themeColor + '">' : '<section class="panel profile-hero">' %>
+      <div class="profile-hero-main">
+        <div class="profile-avatar">
+          <% if (profileUser.avatarUrl) { %><img src="<%= profileUser.avatarUrl %>" alt="" width="96" height="96">
+          <% } else { %><span class="avatar-fallback avatar-lg"><%= profileUser.displayName.slice(0, 1).toUpperCase() %></span><% } %>
+        </div>
+        <div class="profile-id">
+          <h1 class="profile-name"><%= profileUser.displayName %>
+            <% if (profileUser.role === "admin") { %><span class="badge badge-admin">admin</span><% } %>
+            <% if (profileUser.role === "moderator") { %><span class="badge badge-mod">mod</span><% } %>
+          </h1>
+          <p class="profile-handle">@<%= profileUser.handle %> · joined <time datetime="<%= profileUser.createdAt %>"><%= profileUser.createdAt.slice(0, 10) %></time></p>
+          <div class="profile-bio"><%- profileUser.bioHtml %></div>
+        </div>
+      </div>
+      <div class="profile-actions">
+        <% if (isSelf) { %>
+          <a href="/settings" class="btn">Edit my Space</a>
+          <% if (pendingCount > 0) { %><a href="/friends" class="btn btn-alert"><%= pendingCount %> pending request<%= pendingCount === 1 ? "" : "s" %></a><% } %>
+        <% } else if (user) { %>
+          <% if (isFriend) { %>
+            <form method="post" action="/friends/remove" class="inline-form">
+              <input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="handle" value="<%= profileUser.handle %>">
+              <button type="submit" class="btn">✓ Friends — remove?</button>
+            </form>
+          <% } else if (hasIncomingRequest) { %>
+            <form method="post" action="/friends/accept" class="inline-form">
+              <input type="hidden" name="csrf" value="<%= csrf %>">
+              <button type="submit" class="btn btn-primary">Accept friend request</button>
+            </form>
+          <% } else if (hasPendingRequest) { %>
+            <span class="btn btn-disabled">Request sent ⏳</span>
+          <% } else { %>
+            <form method="post" action="/friends/request" class="inline-form">
+              <input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="handle" value="<%= profileUser.handle %>">
+              <button type="submit" class="btn btn-primary">+ Add as friend</button>
+            </form>
+          <% } %>
+        <% } %>
+      </div>
+    </section>
+
+    <section class="profile-friends panel">
+      <h2 class="panel-title">Top 8 Friends <span class="muted">(<%= friendCount %> total)</span></h2>
+      <% if (friends.length === 0) { %><p class="muted">No friends yet. This space could use some glitter.</p><% } %>
+      <div class="top8-grid">
+        <% for (const f of friends) { %>
+          <a class="top8-cell" href="/u/<%= f.handle %>">
+            <% if (f.avatarUrl) { %><img src="<%= f.avatarUrl %>" alt="" loading="lazy"><% } else { %><span class="avatar-fallback"><%= f.displayName.slice(0, 1).toUpperCase() %></span><% } %>
+            <span><%= f.displayName %></span>
+          </a>
+        <% } %>
+      </div>
+    </section>
+
+    <section class="profile-posts">
+      <h2 class="panel-title">Posts</h2>
+      <% if (posts.length === 0) { %><div class="empty-state"><p>No posts yet.</p></div><% } %>
+      <% for (const post of posts) { %>
+        <%- include("partials/post", { post }) %>
+      <% } %>
+    </section>
+  </div>
+</div>
+
+<%- include("partials/foot") %>

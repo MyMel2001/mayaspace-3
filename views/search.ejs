@@ -1,0 +1,37 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page page-narrow">
+  <section class="panel">
+    <h1 class="panel-title">Search</h1>
+    <form method="get" action="/search" class="row-form">
+      <input type="search" name="q" value="<%= q %>" placeholder="Find people by name or handle…" maxlength="100" class="grow">
+      <button type="submit" class="btn btn-primary">Search</button>
+    </form>
+  </section>
+
+  <% if (q !== "") { %>
+    <section class="panel">
+      <h2 class="panel-title">Results for "<%= q %>" (<%= users.length %>)</h2>
+      <% if (users.length === 0) { %><p class="muted">Nobody found. Maybe they haven't joined yet!</p><% } %>
+      <% for (const u of users) { %>
+        <div class="friend-row">
+          <a href="/u/<%= u.handle %>" class="search-result">
+            <% if (u.avatarUrl) { %><img src="<%= u.avatarUrl %>" alt="" width="36" height="36"><% } else { %><span class="avatar-fallback avatar-sm"><%= u.displayName.slice(0, 1).toUpperCase() %></span><% } %>
+            <span><%= u.displayName %> <span class="muted">@<%= u.handle %></span></span>
+            <% if (u.role === "admin") { %><span class="badge badge-admin">admin</span><% } %>
+            <% if (u.role === "moderator") { %><span class="badge badge-mod">mod</span><% } %>
+          </a>
+          <% if (user && user.handle !== u.handle) { %>
+            <form method="post" action="/friends/request" class="inline-form">
+              <input type="hidden" name="csrf" value="<%= csrf %>"><input type="hidden" name="handle" value="<%= u.handle %>">
+              <button type="submit" class="btn">+ Add friend</button>
+            </form>
+          <% } %>
+        </div>
+      <% } %>
+    </section>
+  <% } %>
+</div>
+
+<%- include("partials/foot") %>

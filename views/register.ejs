@@ -1,0 +1,24 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page page-narrow">
+  <section class="panel auth-panel">
+    <h1 class="panel-title">Join <%= siteName %></h1>
+    <p class="muted">Claim your handle. Your Space awaits.</p>
+    <form method="post" action="/register" class="stack-form">
+      <input type="hidden" name="csrf" value="<%= csrf %>">
+      <label for="reg-handle">Username <span class="muted">(letters, numbers, underscore — 3–20 chars)</span></label>
+      <input type="text" id="reg-handle" name="handle" pattern="[a-z0-9_]{3,20}" required autofocus autocomplete="username">
+      <label for="reg-display">Display name</label>
+      <input type="text" id="reg-display" name="displayName" maxlength="50" required>
+      <label for="reg-email">Email <span class="muted">(never shown, only for account recovery)</span></label>
+      <input type="email" id="reg-email" name="email" maxlength="200" required autocomplete="email">
+      <label for="reg-password">Password <span class="muted">(min 8 characters)</span></label>
+      <input type="password" id="reg-password" name="password" minlength="8" maxlength="200" required autocomplete="new-password">
+      <button type="submit" class="btn btn-primary btn-block">Sign me up!</button>
+    </form>
+    <p class="auth-alt">Already a member? <a href="/login">Log in</a></p>
+  </section>
+</div>
+
+<%- include("partials/foot") %>

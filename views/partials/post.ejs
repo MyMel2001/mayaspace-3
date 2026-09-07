@@ -1,0 +1,57 @@
+<%
+/* One post card. Expects `p` = PostView, plus user/csrf from commonLocals. */
+const p = typeof post !== "undefined" ? post : null;
+%>
+<% if (p) { %>
+<article class="post-card" data-post-id="<%= p.id %>">
+  <div class="post-head">
+    <a class="post-avatar" href="<%= p.author.profileUrl %>">
+      <% if (p.author.avatarUrl) { %><img src="<%= p.author.avatarUrl %>" alt="" width="48" height="48" loading="lazy">
+      <% } else { %><span class="avatar-fallback"><%= p.author.displayName.slice(0, 1).toUpperCase() %></span><% } %>
+    </a>
+    <div class="post-meta">
+      <a class="post-author" href="<%= p.author.profileUrl %>"><%= p.author.displayName %></a>
+      <% if (p.author.isRemote) { %><span class="badge badge-remote" title="<%= p.author.handle %>">ᶠᵉᵈ</span><% } %>
+      <% if (p.visibility === "friends") { %><span class="badge badge-friends">friends</span><% } %>
+      <span class="post-time"><a href="<%= p.permalink %>"><time datetime="<%= p.createdAtIso %>"><%= p.timeAgo %></time></a></span>
+    </div>
+  </div>
+
+  <div class="post-body"><%- p.html %></div>
+
+  <% if (p.attachments.length > 0) { %>
+  <div class="post-attachments count-<%= Math.min(p.attachments.length, 4) %>">
+    <% for (const a of p.attachments) { %>
+      <a href="<%= a.url %>" target="_blank" rel="noopener">
+        <img src="<%= a.thumbUrl %>" alt="attachment" width="<%= Math.min(a.width, 320) %>" loading="lazy" class="post-img" data-full="<%= a.url %>">
+      </a>
+    <% } %>
+  </div>
+  <% } %>
+
+  <% for (const e of p.embeds) { %>
+  <div class="post-embed"><%- e.html %></div>
+  <% } %>
+
+  <div class="post-actions">
+    <% if (p.canLike) { %>
+      <form method="post" action="/posts/<%= p.id %>/like" class="inline-form like-form" data-post-id="<%= p.id %>">
+        <input type="hidden" name="csrf" value="<%= csrf %>">
+        <button type="submit" class="linklike like-btn<%= p.likedByMe ? " liked" : "" %>" data-count="<%= p.likeCount %>">
+          <span class="like-icon">★</span> <span class="like-count"><%= p.likeCount %></span>
+        </button>
+      </form>
+    <% } else { %>
+      <span class="like-count-static"><span class="like-icon">★</span> <%= p.likeCount %></span>
+    <% } %>
+    <a href="<%= p.permalink %>" class="comment-link">💬 <%= p.commentCount %></a>
+    <% if (p.remoteUrl) { %><a href="<%= p.remoteUrl %>" target="_blank" rel="noopener noreferrer" class="src-link">source ↗</a><% } %>
+    <% if (p.canDelete) { %>
+      <form method="post" action="/posts/<%= p.id %>/delete" class="inline-form confirm-delete" data-confirm="Delete this post forever?">
+        <input type="hidden" name="csrf" value="<%= csrf %>">
+        <button type="submit" class="linklike danger">delete</button>
+      </form>
+    <% } %>
+  </div>
+</article>
+<% } %>

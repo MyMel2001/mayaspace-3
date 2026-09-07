@@ -1,0 +1,612 @@
+/**
+ * Data layer. Quick.DB (backed by better-sqlite3) keeps every collection in
+ * its own table; each record is a JSON value keyed by a stable id.
+ * All access is async from the app's point of view while the underlying
+ * driver stays synchronous — no locking concerns, single process.
+ */
+import { QuickDB } from "quick.db";
+import { config } from "./config.js";
+import type {
+  AttachmentRecord,
+  CommentLikeRecord,
+  CommentRecord,
+  FriendEdgeRecord,
+  FriendRequestRecord,
+  LikeRecord,
+  ModerationLogRecord,
+  NotificationRecord,
+  PostRecord,
+  RemoteActorRecord,
+  RemoteFollowRecord,
+  Role,
+  UserRecord,
+} from "./types.js";
+import { isoNow, newId } from "./util.js";
+
+
+type AnyRecord =
+  | UserRecord
+  | PostRecord
+  | CommentRecord
+  | AttachmentRecord
+  | FriendRequestRecord
+  | FriendEdgeRecord
+  | RemoteFollowRecord
+  | RemoteActorRecord
+  | NotificationRecord
+  | ModerationLogRecord
+  | LikeRecord
+  | CommentLikeRecord;
+
+const TABLES = [
+  "users",
+  "posts",
+  "comments",
+  "attachments",
+  "friendRequests",
+  "friendEdges",
+  "remoteFollows",
+  "remoteActors",
+  "notifications",
+  "modLog",
+  "likes",
+  "commentLikes",
+  "kv",
+] as const;
+
+export class Store {
+  private root!: QuickDB<AnyRecord>;
+  users!: QuickDB<UserRecord>;
+  posts!: QuickDB<PostRecord>;
+  comments!: QuickDB<CommentRecord>;
+  attachments!: QuickDB<AttachmentRecord>;
+  friendRequests!: QuickDB<FriendRequestRecord>;
+  friendEdges!: QuickDB<FriendEdgeRecord>;
+  remoteFollows!: QuickDB<RemoteFollowRecord>;
+  remoteActors!: QuickDB<RemoteActorRecord>;
+  notifications!: QuickDB<NotificationRecord>;
+  modLog!: QuickDB<ModerationLogRecord>;
+  likes!: QuickDB<LikeRecord>;
+  commentLikes!: QuickDB<CommentLikeRecord>;
+  kv!: QuickDB<string | number | boolean>;
+
+  async init(): Promise<void> {
+    this.root = new QuickDB<AnyRecord>({
+      filePath: config.dbPath,
+      table: "mayaspace_meta",
+      normalKeys: false,
+    });
+    await this.root.init();
+    for (const t of TABLES) {
+      if (t === "kv") {
+        this.kv = this.root.table("kv") as QuickDB<string | number | boolean>;
+        await this.kv.init();
+      } else {
+        const tbl = this.root.table(t) as QuickDB<never>;
+        await tbl.init();
+        (this as unknown as Record<string, QuickDB<never>>)[t] = tbl;
+      }
+    }
+  }
+
+  // ── generic helpers ───────────────────────────────────────────────────────
+
+  /** Loads every row of a table (small-instance scale: fine, single-digit ms). */
+  private async all<T extends AnyRecord>(table: QuickDB<T>): Promise<T[]> {
+    const rows = await table.all<T>();
+    return rows.map((r) => r.value);
+  }
+
+  async kvGet(key: string): Promise<string | number | boolean | null> {
+    return this.kv.get(key);
+  }
+
+  async kvSet(key: string, value: string | number | boolean): Promise<void> {
+    await this.kv.set(key, value);
+  }
+
+  // ── users ─────────────────────────────────────────────────────────────────
+
+  async getUser(handle: string): Promise<UserRecord | null> {
+    return this.users.get(handle.toLowerCase());
+  }
+
+  async getUserById(id: string): Promise<UserRecord | null> {
+    const users = await this.all(this.users);
+    return users.find((u) => u.id === id) ?? null;
+  }
+
+  async getUserByEmail(email: string): Promise<UserRecord | null> {
+    const users = await this.all(this.users);
+    const norm = email.trim().toLowerCase();
+    return users.find((u) => u.email?.toLowerCase() === norm) ?? null;
+  }
+
+  async handleExists(handle: string): Promise<boolean> {
+    return this.users.has(handle.toLowerCase());
+  }
+
+  async createUser(user: UserRecord): Promise<void> {
+    await this.users.set(user.handle, user);
+  }
+
+  async updateUser(handle: string, patch: Partial<UserRecord>): Promise<UserRecord | null> {
+    const existing = await this.getUser(handle);
+    if (!existing) return null;
+    const merged: UserRecord = { ...existing, ...patch, handle: existing.handle, id: existing.id };
+    await this.users.set(handle, merged);
+    return merged;
+  }
+
+  async setUserRole(handle: string, role: Role): Promise<void> {
+    await this.updateUser(handle, { role });
+  }
+
+  /** Substring search over handle/displayName (max 10 results). */
+  async searchUsers(query: string, limit = 10): Promise<UserRecord[]> {
+    const lower = query.toLowerCase();
+    const users = await this.all<UserRecord>(this.users as unknown as QuickDB<UserRecord>);
+    const hits: UserRecord[] = [];
+    for (const u of users) {
+      if (u.suspended) continue;
+      if (u.handle.includes(lower) || u.displayName.toLowerCase().includes(lower)) {
+        hits.push(u);
+        if (hits.length >= limit) break;
+      }
+    }
+    return hits;
+  }
+
+  async countUsers(): Promise<number> {
+    const users = await this.all(this.users);
+    return users.filter((u) => !u.suspended).length;
+  }
+
+  // ── posts ─────────────────────────────────────────────────────────────────
+
+  async createPost(post: PostRecord): Promise<void> {
+    await this.posts.set(post.id, post);
+  }
+
+  async getPost(id: string): Promise<PostRecord | null> {
+    return this.posts.get(id);
+  }
+
+  async updatePost(id: string, patch: Partial<PostRecord>): Promise<PostRecord | null> {
+    const existing = await this.posts.get(id);
+    if (!existing) return null;
+    const merged: PostRecord = { ...existing, ...patch, id: existing.id };
+    await this.posts.set(id, merged);
+    return merged;
+  }
+
+  /** Stable cursor pagination over posts, newest first. */
+  async listPosts(opts: {
+    authorHandle?: string;
+    viewerHandle?: string; // for friends-only filtering
+    isFriendOf?: (handle: string) => Promise<boolean>;
+    limit?: number;
+    cursor?: string | null;
+  }): Promise<{ items: PostRecord[]; nextCursor: string | null }> {
+    const limit = opts.limit ?? 20;
+    let rows = await this.all(this.posts);
+    rows = rows.filter((p) => !p.deleted);
+    if (opts.authorHandle) {
+      rows = rows.filter((p) => p.authorHandle === opts.authorHandle!.toLowerCase());
+    }
+    rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+    if (opts.cursor) {
+      const idx = rows.findIndex((p) => p.id === opts.cursor);
+      if (idx >= 0) rows = rows.slice(idx + 1);
+    }
+    const page: PostRecord[] = [];
+    for (const p of rows) {
+      if (page.length >= limit) break;
+      if (p.visibility === "friends" && opts.viewerHandle !== undefined && opts.isFriendOf) {
+        if (p.authorHandle !== opts.viewerHandle && !(await opts.isFriendOf(p.authorHandle))) {
+          continue;
+        }
+      }
+      page.push(p);
+    }
+    const nextCursor = page.length === limit ? page[page.length - 1].id : null;
+    return { items: page, nextCursor };
+  }
+
+  async countPosts(): Promise<number> {
+    const posts = await this.all(this.posts);
+    return posts.filter((p) => !p.deleted).length;
+  }
+
+  async getPostByApId(apId: string): Promise<PostRecord | null> {
+    const posts = await this.all(this.posts);
+    return posts.find((p) => p.apId === apId) ?? null;
+  }
+
+  // ── comments ──────────────────────────────────────────────────────────────
+
+  async createComment(c: CommentRecord): Promise<void> {
+    await this.comments.set(c.id, c);
+  }
+
+  async getComment(id: string): Promise<CommentRecord | null> {
+    return this.comments.get(id);
+  }
+
+  async listComments(postId: string): Promise<CommentRecord[]> {
+    const all = await this.all(this.comments);
+    return all
+      .filter((c) => c.postId === postId && !c.deleted)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  }
+
+  async countComments(postId: string): Promise<number> {
+    const all = await this.all(this.comments);
+    return all.filter((c) => c.postId === postId && !c.deleted).length;
+  }
+
+  async getCommentByApId(apId: string): Promise<CommentRecord | null> {
+    const all = await this.all(this.comments);
+    return all.find((c) => c.apId === apId) ?? null;
+  }
+
+  async updateComment(id: string, patch: Partial<CommentRecord>): Promise<CommentRecord | null> {
+    const existing = await this.comments.get(id);
+    if (!existing) return null;
+    const merged: CommentRecord = { ...existing, ...patch, id: existing.id };
+    await this.comments.set(id, merged);
+    return merged;
+  }
+
+  // ── attachments ───────────────────────────────────────────────────────────
+
+  async createAttachment(a: AttachmentRecord): Promise<void> {
+    await this.attachments.set(a.id, a);
+  }
+
+  async getAttachment(id: string): Promise<AttachmentRecord | null> {
+    return this.attachments.get(id);
+  }
+
+  async listAttachments(postId: string): Promise<AttachmentRecord[]> {
+    const all = await this.all(this.attachments);
+    return all.filter((a) => a.postId === postId);
+  }
+
+  async listOrphanAttachments(olderThanMs: number): Promise<AttachmentRecord[]> {
+    const all = await this.all(this.attachments);
+    const cutoff = Date.now() - olderThanMs;
+    return all.filter(
+      (a) => a.postId === null && Date.parse(a.createdAt) < cutoff,
+    );
+  }
+
+  async deleteAttachment(id: string): Promise<void> {
+    await this.attachments.delete(id);
+  }
+
+  async attachmentCountForUser(handle: string, postId: string | null): Promise<number> {
+    const all = await this.all(this.attachments);
+    return all.filter((a) => a.uploadedBy === handle && a.postId === postId).length;
+  }
+
+  async updateAttachmentPost(id: string, postId: string): Promise<AttachmentRecord | null> {
+    const existing = await this.attachments.get(id);
+    if (!existing) return null;
+    const merged: AttachmentRecord = { ...existing, postId };
+    await this.attachments.set(id, merged);
+    return merged;
+  }
+
+  // ── friend requests + edges ───────────────────────────────────────────────
+
+  async createFriendRequest(r: FriendRequestRecord): Promise<void> {
+    await this.friendRequests.set(r.id, r);
+  }
+
+  async getFriendRequest(id: string): Promise<FriendRequestRecord | null> {
+    return this.friendRequests.get(id);
+  }
+
+  async listPendingRequestsTo(handle: string): Promise<FriendRequestRecord[]> {
+    const all = await this.all(this.friendRequests);
+    return all.filter((r) => r.toHandle === handle && r.status === "pending");
+  }
+
+  async listPendingRequestsFrom(handle: string): Promise<FriendRequestRecord[]> {
+    const all = await this.all(this.friendRequests);
+    return all.filter((r) => r.fromHandle === handle && r.status === "pending");
+  }
+
+  async updateFriendRequest(
+    id: string,
+    patch: Partial<FriendRequestRecord>,
+  ): Promise<FriendRequestRecord | null> {
+    const existing = await this.friendRequests.get(id);
+    if (!existing) return null;
+    const merged = { ...existing, ...patch, id: existing.id };
+    await this.friendRequests.set(id, merged);
+    return merged;
+  }
+
+  /** Mutual friends of two local users share a lexically-sorted pair key. */
+  static edgeKey(a: string, b: string): string {
+    return [a, b].sort().join("|");
+  }
+
+  async isFriend(a: string, b: string): Promise<boolean> {
+    if (a === b) return false;
+    return this.friendEdges.has(Store.edgeKey(a, b));
+  }
+
+  async addFriendEdge(a: string, b: string): Promise<void> {
+    const edge: FriendEdgeRecord = {
+      id: Store.edgeKey(a, b),
+      a: [a, b].sort()[0],
+      b: [a, b].sort()[1],
+      createdAt: isoNow(),
+    };
+    await this.friendEdges.set(edge.id, edge);
+  }
+
+  async removeFriendEdge(a: string, b: string): Promise<void> {
+    await this.friendEdges.delete(Store.edgeKey(a, b));
+  }
+
+  async listFriends(handle: string): Promise<string[]> {
+    const edges = await this.all(this.friendEdges);
+    const out: string[] = [];
+    for (const e of edges) {
+      if (e.a === handle) out.push(e.b);
+      else if (e.b === handle) out.push(e.a);
+    }
+    return out;
+  }
+
+  async friendCount(handle: string): Promise<number> {
+    const edges = await this.all(this.friendEdges);
+    return edges.filter((e) => e.a === handle || e.b === handle).length;
+  }
+
+  // ── remote follows ────────────────────────────────────────────────────────
+
+  static remoteFollowKey(localHandle: string, actorId: string): string {
+    return `${localHandle}|${actorId}`;
+  }
+
+  async upsertRemoteFollow(f: RemoteFollowRecord): Promise<void> {
+    await this.remoteFollows.set(Store.remoteFollowKey(f.localHandle, f.remoteActorId), f);
+  }
+
+  async getRemoteFollow(localHandle: string, actorId: string): Promise<RemoteFollowRecord | null> {
+    return this.remoteFollows.get(Store.remoteFollowKey(localHandle, actorId));
+  }
+
+  async listRemoteFollows(localHandle: string): Promise<RemoteFollowRecord[]> {
+    const all = await this.all(this.remoteFollows);
+    return all.filter((f) => f.localHandle === localHandle);
+  }
+
+  async listRemoteFollowersOf(actorId: string): Promise<RemoteFollowRecord[]> {
+    const all = await this.all(this.remoteFollows);
+    return all.filter((f) => f.remoteActorId === actorId && f.state === "active");
+  }
+
+  async deleteRemoteFollow(localHandle: string, actorId: string): Promise<void> {
+    await this.remoteFollows.delete(Store.remoteFollowKey(localHandle, actorId));
+  }
+
+  async countLocalFollowersOf(actorId: string): Promise<number> {
+    return (await this.listRemoteFollowersOf(actorId)).length;
+  }
+
+  // ── remote actors ─────────────────────────────────────────────────────────
+
+  async upsertRemoteActor(a: RemoteActorRecord): Promise<void> {
+    await this.remoteActors.set(a.actorId, a);
+  }
+
+  async getRemoteActor(actorId: string): Promise<RemoteActorRecord | null> {
+    return this.remoteActors.get(actorId);
+  }
+
+  async countRemoteActors(): Promise<number> {
+    return (await this.all(this.remoteActors)).length;
+  }
+
+  async postsByRemoteActor(actorId: string): Promise<PostRecord[]> {
+    const posts = await this.all(this.posts);
+    return posts
+      .filter((p) => p.remoteActorId === actorId && !p.deleted)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  }
+
+  /** Newest-first feed of mirrored remote posts. */
+  async remoteFeed(limit: number): Promise<PostRecord[]> {
+    const posts = await this.all(this.posts);
+    const blocked = new Set(
+      (await this.all(this.remoteActors)).filter((a) => a.suspended).map((a) => a.actorId),
+    );
+    return posts
+      .filter((p) => !p.deleted && p.authorType === "remote" && !blocked.has(p.remoteActorId ?? ""))
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+      .slice(0, limit);
+  }
+
+  async listKnownRemoteActors(limit: number): Promise<RemoteActorRecord[]> {
+    const all = await this.all(this.remoteActors);
+    return all.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, limit);
+  }
+
+  async remoteFollowCountsFor(handle: string): Promise<{ following: number }> {
+    return { following: (await this.listRemoteFollows(handle)).length };
+  }
+
+  /** Remote actors that follow a LOCAL user's fediverse actor. */
+  async remoteFollowersOfLocal(handle: string): Promise<RemoteFollowRecord[]> {
+    const all = await this.all(this.remoteFollows);
+    return all.filter((f) => f.remoteActorId.startsWith(this.mayaUserBase(handle)));
+  }
+
+  /** Adds/refreshes a "remote actor follows local user" record. */
+  async addLocalFollower(localHandle: string, remoteActorId: string): Promise<void> {
+    const id = Store.remoteFollowKey(localHandle, remoteActorId);
+    const existing = await this.remoteFollows.get(id);
+    await this.remoteFollows.set(id, {
+      id,
+      localHandle,
+      remoteActorId,
+      state: "active",
+      createdAt: existing?.createdAt ?? isoNow(),
+    });
+  }
+
+  async removeLocalFollower(localHandle: string, remoteActorId: string): Promise<void> {
+    await this.remoteFollows.delete(Store.remoteFollowKey(localHandle, remoteActorId));
+  }
+
+  private mayaUserBase(handle: string): string {
+    // Local followers are tracked as follows whose remoteActorId is the
+    // local actor IRI of the followed user.
+    return new URL(`/users/${encodeURIComponent(handle)}`, config.mayaUrl).href;
+  }
+
+  // ── likes ─────────────────────────────────────────────────────────────────
+
+  static likeKey(postId: string, liker: string): string {
+    return `${postId}:${liker}`;
+  }
+
+  async likePost(postId: string, liker: string, remoteActorId: string | null): Promise<void> {
+    await this.likes.set(Store.likeKey(postId, liker), {
+      id: Store.likeKey(postId, liker),
+      postId,
+      liker,
+      remoteActorId,
+      createdAt: isoNow(),
+    });
+  }
+
+  async unlikePost(postId: string, liker: string): Promise<void> {
+    await this.likes.delete(Store.likeKey(postId, liker));
+  }
+
+  async hasLiked(postId: string, liker: string): Promise<boolean> {
+    return this.likes.has(Store.likeKey(postId, liker));
+  }
+
+  async likeCount(postId: string): Promise<number> {
+    const all = await this.all(this.likes);
+    return all.filter((l) => l.postId === postId).length;
+  }
+
+  async likeCountsFor(postIds: string[]): Promise<Map<string, number>> {
+    const all = await this.all(this.likes);
+    const map = new Map<string, number>(postIds.map((id) => [id, 0]));
+    for (const l of all) {
+      if (map.has(l.postId)) map.set(l.postId, (map.get(l.postId) ?? 0) + 1);
+    }
+    return map;
+  }
+
+  // ── comment likes ─────────────────────────────────────────────────────────
+
+  static commentLikeKey(commentId: string, liker: string): string {
+    return `${commentId}:${liker}`;
+  }
+
+  async likeComment(commentId: string, liker: string, remoteActorId: string | null): Promise<void> {
+    await this.commentLikes.set(Store.commentLikeKey(commentId, liker), {
+      id: Store.commentLikeKey(commentId, liker),
+      commentId,
+      liker,
+      remoteActorId,
+      createdAt: isoNow(),
+    });
+  }
+
+  async unlikeComment(commentId: string, liker: string): Promise<void> {
+    await this.commentLikes.delete(Store.commentLikeKey(commentId, liker));
+  }
+
+  async hasLikedComment(commentId: string, liker: string): Promise<boolean> {
+    return this.commentLikes.has(Store.commentLikeKey(commentId, liker));
+  }
+
+  async commentLikeCount(commentId: string): Promise<number> {
+    const all = await this.all<CommentLikeRecord>(this.commentLikes as unknown as QuickDB<CommentLikeRecord>);
+    return all.filter((l) => l.commentId === commentId).length;
+  }
+
+  // ── notifications ─────────────────────────────────────────────────────────
+
+  async createNotification(n: Omit<NotificationRecord, "id" | "createdAt" | "read">): Promise<void> {
+    const record: NotificationRecord = { ...n, id: newId(), read: false, createdAt: isoNow() };
+    await this.notifications.set(record.id, record);
+  }
+
+  async listNotifications(handle: string, limit = 50): Promise<NotificationRecord[]> {
+    const all = await this.all(this.notifications);
+    return all
+      .filter((n) => n.toHandle === handle)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+      .slice(0, limit);
+  }
+
+  async unreadNotificationCount(handle: string): Promise<number> {
+    const all = await this.all(this.notifications);
+    return all.filter((n) => n.toHandle === handle && !n.read).length;
+  }
+
+  async markNotificationsRead(handle: string): Promise<void> {
+    const all = await this.all(this.notifications);
+    for (const n of all) {
+      if (n.toHandle === handle && !n.read) await this.notifications.set(n.id, { ...n, read: true });
+    }
+  }
+
+  async pruneNotifications(olderThanMs: number): Promise<number> {
+    const all = await this.all(this.notifications);
+    const cutoff = Date.now() - olderThanMs;
+    let removed = 0;
+    for (const n of all) {
+      if (Date.parse(n.createdAt) < cutoff) {
+        await this.notifications.delete(n.id);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  // ── moderation log ────────────────────────────────────────────────────────
+
+  async addModLog(entry: Omit<ModerationLogRecord, "id" | "createdAt">): Promise<void> {
+    const record: ModerationLogRecord = { ...entry, id: newId(), createdAt: isoNow() };
+    await this.modLog.set(record.id, record);
+  }
+
+  async listModLog(limit = 100): Promise<ModerationLogRecord[]> {
+    const all = await this.all(this.modLog);
+    return all.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, limit);
+  }
+
+  // ── maintenance ───────────────────────────────────────────────────────────
+
+  async stats(): Promise<{
+    users: number;
+    posts: number;
+    comments: number;
+    remoteActors: number;
+    friendEdges: number;
+  }> {
+    return {
+      users: await this.countUsers(),
+      posts: await this.countPosts(),
+      comments: (await this.all(this.comments)).filter((c) => !c.deleted).length,
+      remoteActors: await this.countRemoteActors(),
+      friendEdges: (await this.all(this.friendEdges)).length,
+    };
+  }
+}
+
+export const store = new Store();

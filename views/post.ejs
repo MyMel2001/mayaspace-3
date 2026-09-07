@@ -1,0 +1,46 @@
+<%- include("partials/head") %>
+<%- include("partials/nav") %>
+
+<div class="page page-narrow">
+  <% if (postView) { %>
+    <%- include("partials/post", { post: postView }) %>
+
+    <section class="panel">
+      <h2 class="panel-title">Comments (<%= comments.length %>)</h2>
+      <% if (comments.length === 0) { %><p class="muted">No comments yet. Say something nice!</p><% } %>
+      <% for (const c of comments) { %>
+        <div class="comment" id="comment-<%= c.id %>">
+          <a class="comment-avatar" href="<%= c.author.profileUrl %>">
+            <% if (c.author.avatarUrl) { %><img src="<%= c.author.avatarUrl %>" alt="" width="32" height="32" loading="lazy"><% } else { %><span class="avatar-fallback avatar-sm"><%= c.author.displayName.slice(0, 1).toUpperCase() %></span><% } %>
+          </a>
+          <div class="comment-main">
+            <div class="comment-head">
+              <a href="<%= c.author.profileUrl %>"><%= c.author.displayName %></a>
+              <% if (c.author.isRemote) { %><span class="badge badge-remote" title="<%= c.author.handle %>">ᶠᵉᵈ</span><% } %>
+              <span class="muted"><time datetime="<%= c.createdAtIso %>"><%= c.timeAgo %></time></span>
+              <% if (c.canDelete) { %>
+                <form method="post" action="/comments/<%= c.id %>/delete" class="inline-form confirm-delete" data-confirm="Delete this comment?">
+                  <input type="hidden" name="csrf" value="<%= csrf %>">
+                  <button type="submit" class="linklike danger">delete</button>
+                </form>
+              <% } %>
+            </div>
+            <div class="comment-body"><%- c.html %></div>
+          </div>
+        </div>
+      <% } %>
+
+      <% if (user) { %>
+        <form method="post" action="/posts/<%= postView.id %>/comment" class="stack-form comment-form">
+          <input type="hidden" name="csrf" value="<%= csrf %>">
+          <textarea name="body" rows="2" maxlength="3000" placeholder="Write a comment…" required></textarea>
+          <button type="submit" class="btn btn-primary">Comment!</button>
+        </form>
+      <% } else { %>
+        <p class="muted"><a href="/login">Log in</a> to comment.</p>
+      <% } %>
+    </section>
+  <% } %>
+</div>
+
+<%- include("partials/foot") %>
