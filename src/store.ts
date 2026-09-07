@@ -98,6 +98,45 @@ export class Store {
     await this.migrateLegacyDottedKeys();
     await this.migrateDoubleEncodedKeys();
     await this.migrateInboundFollows();
+    await this.migrateJunkRemoteActors();
+  }
+
+  /**
+   * Minimal shape check for cached remote actors. Rows that fail it (corrupt
+   * writes, probe debris, partial records) poison every consumer that trusts
+   * the cache — follow requests, deliveries, profile panels — so they are
+   * treated as absent and re-fetched from the network instead.
+   */
+  static looksLikeRemoteActor(v: unknown): v is RemoteActorRecord {
+    if (v === null || typeof v !== "object") return false;
+    const r = v as Record<string, unknown>;
+    return (
+      typeof r.actorId === "string" &&
+      r.actorId.startsWith("http") &&
+      typeof r.handle === "string" &&
+      r.handle !== "" &&
+      typeof r.inbox === "string" &&
+      r.inbox !== "" &&
+      typeof r.createdAt === "string" &&
+      typeof r.suspended === "boolean"
+    );
+  }
+
+  /**
+   * One-time sweep: drops remoteActors rows that fail looksLikeRemoteActor.
+   * Such rows made getRemoteActor() return garbage (e.g. a "probe" stub),
+   * which silently broke follow acceptance and deliveries for that actor.
+   */
+  private async migrateJunkRemoteActors(): Promise<void> {
+    const rows = await this.remoteActors.all<AnyRecord>();
+    let dropped = 0;
+    for (const row of rows) {
+      if (Store.looksLikeRemoteActor(row.value)) continue;
+      // Bypass QuickDB.delete (it dot-splits keys even in normalKeys mode).
+      await this.root.driver.deleteRowByKey("remoteActors", row.id);
+      dropped++;
+    }
+    if (dropped > 0) console.log(`[store] dropped ${dropped} junk remoteActors row(s)`);
   }
 
   /**
@@ -625,7 +664,20 @@ export class Store {
   }
 
   async getRemoteActor(actorId: string): Promise<RemoteActorRecord | null> {
-    return this.remoteActors.get(Store.key(actorId));
+    const key = Store.key(actorId);
+    const value = await this.remoteActors.get(key);
+    if (value === null) return null;
+    if (!Store.looksLikeRemoteActor(value)) {
+      // Corrupt/partial cache row: evict it so the caller re-resolves the
+      // actor from the network rather than acting on garbage.
+      try {
+        await this.root.driver.deleteRowByKey("remoteActors", key);
+      } catch {
+        // best-effort eviction
+      }
+      return null;
+    }
+    return value;
   }
 
   async countRemoteActors(): Promise<number> {

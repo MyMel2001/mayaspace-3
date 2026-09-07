@@ -40,6 +40,17 @@ export function actorIdFor(handle: string): URL {
   return new URL(`${config.mayaUrl}/users/${encodeURIComponent(handle)}`);
 }
 
+/**
+ * Extracts the local handle from a local actor IRI
+ * ("{mayaUrl}/users/{handle}") or returns null for anything else.
+ */
+export function actorHandleFromIri(iri: string): string | null {
+  if (!iri.startsWith(`${config.mayaUrl}/users/`)) return null;
+  const rest = iri.slice(`${config.mayaUrl}/users/`.length).split(/[?#]/)[0];
+  const handle = decodeURIComponent(rest).toLowerCase();
+  return /^[a-z0-9_]{3,20}$/.test(handle) ? handle : null;
+}
+
 export function noteIdFor(postId: string): URL {
   return new URL(`${config.mayaUrl}/posts/${encodeURIComponent(postId)}`);
 }
@@ -194,9 +205,18 @@ function setupInboxListeners(
 ): void {
   inbox
     .on(Follow, async (ctx, follow) => {
+      // The Follow's object can also name the local recipient (Mastodon does
+      // not deliver to /users/{handle}/inbox when a shared inbox exists, so
+      // ctx.recipient is null there — resolve the target from the activity).
       const recipient = (ctx as unknown as { recipient: string | null }).recipient;
-      if (recipient === null) return;
-      const localHandle = decodeURIComponent(recipient).toLowerCase();
+      const objectActorIri = follow.objectId?.href ?? null;
+      const localHandle =
+        recipient !== null
+          ? decodeURIComponent(recipient).toLowerCase()
+          : objectActorIri !== null && objectActorIri.startsWith(config.mayaUrl)
+            ? actorHandleFromIri(objectActorIri)
+            : null;
+      if (localHandle === null) return;
       const target = await store.getUser(localHandle);
       if (!target || target.suspended) return;
       const followerId = follow.actorId?.href;
@@ -213,7 +233,6 @@ function setupInboxListeners(
       }
 
       // Queue a follow request for the local user to approve — the actor
-      // advertises manuallyApprovesFollowers. An already-approved follower
       // advertises manuallyApprovesFollowers. An already-approved follower
       // re-sending Follow (key re-sync, server migration…) is re-confirmed
       // immediately instead of being demoted back to pending.
@@ -399,9 +418,18 @@ function setupInboxListeners(
       const object = await undo.getObject();
       const actorId = undo.actorId?.href;
       if (!actorId) return;
+      // Shared-inbox deliveries carry no recipient: fall back to the undone
+      // Follow's object IRI so remote unfollows still clear local state.
       const recipient = (ctx as unknown as { recipient: string | null }).recipient;
-      if (object instanceof Follow && recipient !== null) {
-        const localHandle = decodeURIComponent(recipient).toLowerCase();
+      if (object instanceof Follow) {
+        const objectActorIri = object.objectId?.href ?? null;
+        const localHandle =
+          recipient !== null
+            ? decodeURIComponent(recipient).toLowerCase()
+            : objectActorIri !== null && objectActorIri.startsWith(config.mayaUrl)
+              ? actorHandleFromIri(objectActorIri)
+              : null;
+        if (localHandle === null) return;
         await store.deleteFediverseFollow(localHandle, actorId);
         log.debug`Remote unfollow: ${actorId} -> ${localHandle}`;
       } else if (object instanceof Like || object instanceof Announce) {

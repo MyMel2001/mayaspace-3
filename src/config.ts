@@ -36,6 +36,22 @@ if (!/^https?:\/\/[^\s]+$/.test(mayaUrl)) {
   throw new Error(`MAYA_URL must be an absolute http(s) URL (got: ${mayaUrl})`);
 }
 
+const port = int("PORT", 3000);
+
+// An explicit port in MAYA_URL must match PORT: every actor/note IRI is
+// minted from MAYA_URL, so a mismatch (MAYA_URL=http://localhost:3000 while
+// the server actually listens on PORT=3474) advertises unreachable actor
+// IRIs — remote servers 202 our deliveries but can't dereference our
+// actors' keys or profiles, so follows never confirm and everything
+// federation-side silently rots. Fail fast instead.
+const mayaUrlPort = new URL(mayaUrl).port;
+if (mayaUrlPort !== "" && mayaUrlPort !== String(port)) {
+  throw new Error(
+    `MAYA_URL port (${mayaUrlPort}) does not match PORT (${port}). ` +
+      "Actor IRIs are minted from MAYA_URL, so these must agree.",
+  );
+}
+
 const uploadDir = path.resolve(str("UPLOAD_DIR", "./data/uploads"));
 fs.mkdirSync(uploadDir, { recursive: true });
 fs.mkdirSync(path.dirname(path.resolve(str("DB_PATH", "./data/mayaspace.db"))), {
@@ -100,7 +116,7 @@ if (mayaUrl.startsWith("https://") && trustProxyHops === 0) {
 export const config = {
   /** Canonical public origin of this instance, used for all actor/object IRIs. */
   mayaUrl,
-  port: int("PORT", 3000),
+  port,
   siteName: str("SITE_NAME", "MayaSpace"),
   siteTagline: str("SITE_TAGLINE", "A place for friends."),
   sessionSecret,
