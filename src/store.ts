@@ -96,6 +96,7 @@ export class Store {
       }
     }
     await this.migrateLegacyDottedKeys();
+    await this.migrateDoubleEncodedKeys();
     await this.migrateInboundFollows();
   }
 
@@ -110,7 +111,10 @@ export class Store {
    * junk rows are removed.
    */
   private async migrateLegacyDottedKeys(): Promise<void> {
-    const migrated = (await this.kv.get("storeKeyMigrationDone")) === true;
+    // NOTE: must read through kvGet (encoded key) — a raw kv.get() here never
+    // sees the encoded marker, so the migration re-ran on every boot and
+    // base64url-encoded already-encoded keys one more time each restart.
+    const migrated = (await this.kvGet("storeKeyMigrationDone")) === true;
     if (migrated) return;
 
     const isRecord: Record<string, (v: Record<string, unknown>) => boolean> = {
@@ -161,6 +165,78 @@ export class Store {
   }
 
   /**
+   * Repairs rows keyed base64url(base64url(raw)) — the migrateLegacyDottedKeys
+   * pass re-encoded keys that were ALREADY base64url (written by the brief
+   * Store.key() + normalKeys=true interlude). Because get()/set() encode once,
+   * those rows became unreachable: getRemoteActor() misses them, so remote
+   * actors get re-fetched and re-inserted after every restart — duplicates
+   * piling up in remoteActors/remoteFollows/likes/commentLikes.
+   *
+   * A double-encoded ID is exactly base64url of a valid base64url string that
+   * decodes to the real key. Detection: decode the row id once, and if the
+   * result still looks like base64url of the record's canonical key
+   * (actorId / composite key present in the record), collapse it.
+   */
+  private async migrateDoubleEncodedKeys(): Promise<void> {
+    if ((await this.kvGet("storeDoubleKeyMigrationDone")) === true) return;
+
+    // canonicalKey(record) → the pre-encoding key this row should sit under.
+    const canonical: Record<string, (v: Record<string, unknown>) => string | null> = {
+      remoteActors: (v) => (typeof v.actorId === "string" ? v.actorId : null),
+      remoteFollows: (v) =>
+        typeof v.localHandle === "string" && typeof v.remoteActorId === "string"
+          ? Store.remoteFollowKey(v.localHandle, v.remoteActorId)
+          : null,
+      likes: (v) =>
+        typeof v.postId === "string" && typeof v.liker === "string"
+          ? Store.likeKey(v.postId, v.liker)
+          : null,
+      commentLikes: (v) =>
+        typeof v.commentId === "string" && typeof v.liker === "string"
+          ? Store.commentLikeKey(v.commentId, v.liker)
+          : null,
+    };
+
+    for (const [t, keyOf] of Object.entries(canonical)) {
+      const tbl = this.root.table(t) as QuickDB<AnyRecord>;
+      const rows = await tbl.all<AnyRecord>();
+      let fixed = 0;
+      for (const row of rows) {
+        const value = row.value as unknown as Record<string, unknown>;
+        const expected = keyOf(value);
+        if (expected === null) continue;
+        const properId = Store.key(expected);
+        if (row.id === properId) continue; // already correct
+        if (row.id !== expected && row.id !== Store.key(properId)) {
+          // Over-encoded ids (marker bug compounded across restarts): strip
+          // base64url layers until we land on the proper key or the raw
+          // expected key. unwrapBase64 guarantees each decode round-trips,
+          // so this terminates and never mangles a non-encoded id.
+          let id = row.id;
+          let depth = 0;
+          while (id !== properId && id !== expected) {
+            const inner = Store.unwrapBase64(id);
+            if (inner === null) break;
+            id = inner;
+            depth++;
+          }
+          if (!(depth > 0 && (id === properId || id === expected))) continue;
+        }
+        // When the proper row already exists (the duplicate the running code
+        // wrote), keep ITS content and just drop the stray legacy row.
+        const alreadyProper = (await tbl.get(properId)) !== null;
+        if (!alreadyProper) {
+          await tbl.set(properId, { ...(value as unknown as Record<string, unknown>), id: properId } as AnyRecord);
+        }
+        await this.root.driver.deleteRowByKey(t, row.id);
+        fixed++;
+      }
+      if (fixed > 0) console.log(`[store] re-keyed ${fixed} over-encoded row(s) in "${t}"`);
+    }
+    await this.kvSet("storeDoubleKeyMigrationDone", true);
+  }
+
+  /**
    * Legacy remoteFollows rows doubled as inbound "remote actor follows local
    * user" records: the old inbox listener wrote them with state "active",
    * while outbound follows were always written as "pending" (nothing ever
@@ -199,6 +275,21 @@ export class Store {
    */
   static key(raw: string): string {
     return Buffer.from(raw, "utf8").toString("base64url");
+  }
+
+  /**
+   * Strips one base64url layer: returns the decoded string when `id` is a
+   * valid base64url encoding, else null. Used to collapse over-encoded keys.
+   */
+  static unwrapBase64(id: string): string | null {
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) return null;
+    try {
+      const decoded = Buffer.from(id, "base64url").toString("utf8");
+      // Round-trip check: re-encoding must reproduce the input exactly.
+      return Store.key(decoded) === id ? decoded : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Loads every row of a table (small-instance scale: fine, single-digit ms). */

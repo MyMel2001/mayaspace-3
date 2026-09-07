@@ -10,6 +10,7 @@ import { ensureRemoteActor, resolveRemoteActor } from "../../fediverse/remote.js
 import { sendFollow, sendUnfollow } from "../../fediverse/federation.js";
 import {
   acceptFediverseFollow,
+  pendingFollowRequestViews,
   rejectFediverseFollow,
 } from "../../services/fediverseFollows.js";
 import { getFederation } from "../../app.js";
@@ -27,19 +28,9 @@ router.get("/fediverse", async (req: Request, res: Response) => {
   const views = await buildPostViews(posts, req.user);
   const remoteActors = await store.listKnownRemoteActors(20);
   // Inbound follow requests awaiting approval (shown on-page when logged in).
-  const followRequests = [];
-  if (req.user) {
-    for (const f of await store.listPendingFediverseFollowRequests(req.user.handle)) {
-      const a = await store.getRemoteActor(f.remoteActorId);
-      if (!a || a.suspended) continue;
-      followRequests.push({
-        actorId: a.actorId,
-        handle: a.handle,
-        name: a.name ?? a.handle,
-        avatarUrl: a.iconUrl,
-      });
-    }
-  }
+  const followRequests = req.user
+    ? await pendingFollowRequestViews(req.user.handle)
+    : [];
   res.render("fediverse", {
     ...(await commonLocals(req, res)),
     pageTitle: "Fediverse",
@@ -175,19 +166,7 @@ router.post(
 
 /** The local user's queue of inbound fediverse follow requests. */
 router.get("/fediverse/follow-requests", requireLogin, async (req: Request, res: Response) => {
-  const handle = req.user!.handle;
-  const pending = await store.listPendingFediverseFollowRequests(handle);
-  const requests = [];
-  for (const f of pending) {
-    const a = await store.getRemoteActor(f.remoteActorId);
-    if (!a || a.suspended) continue;
-    requests.push({
-      actorId: a.actorId,
-      handle: a.handle,
-      name: a.name ?? a.handle,
-      avatarUrl: a.iconUrl,
-    });
-  }
+  const requests = await pendingFollowRequestViews(req.user!.handle);
   res.render("followRequests", {
     ...(await commonLocals(req, res)),
     pageTitle: "Fediverse follow requests",

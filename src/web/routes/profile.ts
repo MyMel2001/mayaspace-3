@@ -21,6 +21,7 @@ import { config } from "../../config.js";
 export interface ConnectionEntry {
   name: string;
   handle: string;
+  actorId: string | null;
   avatarUrl: string | null;
   profileUrl: string;
   isRemote: boolean;
@@ -80,6 +81,7 @@ async function profilePage(
     .map((f) => ({
       name: f!.displayName,
       handle: f!.handle,
+      actorId: null,
       avatarUrl: f!.avatarUrl,
       profileUrl: `/u/${f!.handle}`,
       isRemote: false,
@@ -105,6 +107,7 @@ async function profilePage(
     ...inbound.views.map((v: FediverseConnectionView) => ({
       name: v.name,
       handle: v.handle,
+      actorId: v.actorId,
       avatarUrl: v.avatarUrl,
       profileUrl: v.profileUrl,
       isRemote: v.isRemote,
@@ -116,6 +119,7 @@ async function profilePage(
     ...outbound.views.map((v: FediverseConnectionView) => ({
       name: v.name,
       handle: v.handle,
+      actorId: v.actorId,
       avatarUrl: v.avatarUrl,
       profileUrl: v.profileUrl,
       isRemote: v.isRemote,
