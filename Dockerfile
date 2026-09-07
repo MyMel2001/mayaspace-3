@@ -30,7 +30,7 @@ COPY --chown=maya:maya public ./public
 RUN mkdir -p data logs && chown -R maya:maya data logs
 
 USER maya
-EXPOSE 3000
+EXPOSE 3414
 
 # Health endpoint is served at /healthz (see src/web/routes/home.ts).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
