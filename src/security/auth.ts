@@ -1,17 +1,16 @@
 /**
- * Express middleware: sessions (SQLite-backed), CSRF double-submit with a
- * per-session token, authentication gates, role gates, and rate limiting.
- * CSRF token is minted on first render and required on every state-changing
- * POST — forms embed it as a hidden input.
+ * Express middleware: sessions (SQLite-backed), CSRF double-submit (signed
+ * cookie + per-session token), authentication gates, role gates, and rate
+ * limiting. A CSRF token is minted on first render and required on every
+ * state-changing POST — forms embed it as a hidden input.
  */
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
 import { appLog } from "../logger.js";
 import { store } from "../store.js";
 import type { Role, UserRecord } from "../types.js";
-import { timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import rateLimit from "express-rate-limit";
 import session from "express-session";
@@ -57,26 +56,106 @@ export function sessionMiddleware(): RequestHandler {
 }
 
 // ── CSRF ─────────────────────────────────────────────────────────────────────
+//
+// Tokens ride two independent carriers so a lost/expired session (cookie not
+// sent, new device, session store rotation, localhost vs 127.0.0.1 origin
+// mismatch…) can no longer hard-fail every form POST:
+//
+//   1. signed cookie  — HMAC(secret, random secret) double-submit cookie,
+//     minted on first render; the form echoes the full "secret.signature"
+//     value back, and the guard verifies the signature server-side. The HMAC
+//     makes it impossible for an attacker to plant a cookie AND a matching
+//     form field without knowing the server secret.
+//   2. per-session token — the original carrier, still accepted so sessions
+//     that already carry one keep working across a deploy.
+//
+// The guard accepts EITHER carrier. SameSite=Lax on both cookies blocks
+// cross-site form posts from even delivering credentials, so this stays a
+// genuine CSRF defense rather than token theater.
 
-export function issueCsrfToken(req: Request): string {
-  if (typeof req.session.csrfToken === "string" && req.session.csrfToken.length >= 32) {
-    req.csrfToken = req.session.csrfToken;
-    return req.session.csrfToken;
-  }
-  const token = randomBytes(32).toString("base64url");
-  req.session.csrfToken = token;
-  req.csrfToken = token;
-  return token;
+const CSRF_COOKIE = "mayaspace.csrf";
+const CSRF_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 2 weeks, mirrors session maxAge
+
+function signCsrf(secret: string): string {
+  const sig = createHmac("sha256", config.sessionSecret).update(secret).digest("base64url");
+  return `${secret}.${sig}`;
 }
 
+/** Read a single cookie from the raw Cookie header (no cookie-parser dep). */
+function readCookie(header: string | undefined, name: string): string | undefined {
+  if (typeof header !== "string" || header === "") return undefined;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) {
+      const raw = part.slice(eq + 1).trim();
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return raw;
+      }
+    }
+  }
+  return undefined;
+}
+
+function verifySigned(value: string): boolean {
+  const dot = value.indexOf(".");
+  if (dot <= 0) return false;
+  const secret = value.slice(0, dot);
+  const sig = value.slice(dot + 1);
+  if (secret.length < 32) return false;
+  // Compare base64url digests as equal-length UTF-8 buffers (timing-safe).
+  const expected = createHmac("sha256", config.sessionSecret).update(secret).digest("base64url");
+  if (expected.length !== sig.length) return false;
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(sig));
+}
+
+/**
+ * Issue (or reuse) the render-time CSRF token. Whichever carrier already
+ * holds a valid token is reused, and the signed cookie is (re)synced to it so
+ * BOTH carriers always carry the same secret at render time — either one can
+ * then verify the POST even if the other is lost in between.
+ */
+export function issueCsrfToken(req: Request, res: Response): string {
+  const cookieOpts = {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: config.cookieSecure,
+    maxAge: CSRF_TTL_MS,
+    path: "/",
+  };
+  // 1) Existing per-session token: keep working, sync the cookie to it.
+  if (typeof req.session?.csrfToken === "string" && req.session.csrfToken.length >= 32) {
+    const token = req.session.csrfToken;
+    req.csrfToken = token;
+    res.cookie(CSRF_COOKIE, signCsrf(token), cookieOpts);
+    return token;
+  }
+  // 2) Valid signed cookie: reuse its secret (session may be gone entirely).
+  const cookieToken = readCookie(req.headers.cookie, CSRF_COOKIE);
+  if (typeof cookieToken === "string" && verifySigned(cookieToken)) {
+    const secret = cookieToken.slice(0, cookieToken.indexOf("."));
+    req.csrfToken = secret;
+    if (req.session) req.session.csrfToken = secret;
+    return secret;
+  }
+  // 3) Mint fresh and seed both carriers.
+  const secret = randomBytes(32).toString("base64url");
+  req.csrfToken = secret;
+  if (req.session) req.session.csrfToken = secret;
+  res.cookie(CSRF_COOKIE, signCsrf(secret), cookieOpts);
+  return secret;
+}
+
+/** CSRF gate for every state-changing POST. */
 export function csrfGuard(req: Request, res: Response, next: NextFunction): void {
   if (req.method !== "POST") {
     next();
     return;
   }
-  const sessionToken = req.session.csrfToken;
-  const supplied = req.body?.csrf;
-  if (typeof sessionToken !== "string" || typeof supplied !== "string") {
+  const supplied = typeof req.body?.csrf === "string" ? req.body.csrf : undefined;
+  if (supplied === undefined) {
     res.status(403).render("error", {
       pageTitle: "Forbidden",
       message: "Your session expired or the form is missing its security token. Please go back and try again.",
@@ -84,18 +163,36 @@ export function csrfGuard(req: Request, res: Response, next: NextFunction): void
     });
     return;
   }
-  const a = Buffer.from(sessionToken);
-  const b = Buffer.from(supplied);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    log.warn`CSRF token mismatch for ${req.path} (user: ${req.user?.handle ?? "anonymous"})`;
-    res.status(403).render("error", {
-      pageTitle: "Forbidden",
-      message: "Invalid security token. Please go back, refresh the page, and try again.",
-      user: req.user ?? null,
-    });
+  // Carrier 1: per-session token.
+  const sessionToken = req.session?.csrfToken;
+  if (typeof sessionToken === "string" && safeEq(sessionToken, supplied)) {
+    next();
     return;
   }
-  next();
+  // Carrier 2: signed double-submit cookie. The submitted value must match
+  // the secret half of the signed cookie, and the cookie must carry a valid
+  // HMAC over it — an attacker can forge neither without the server secret.
+  const cookieToken = readCookie(req.headers.cookie, CSRF_COOKIE);
+  if (typeof cookieToken === "string" && verifySigned(cookieToken)) {
+    const secret = cookieToken.slice(0, cookieToken.indexOf("."));
+    if (safeEq(secret, supplied)) {
+      next();
+      return;
+    }
+  }
+  log.warn`CSRF verification failed for ${req.path} (user: ${req.user?.handle ?? "anonymous"}, carrier: ${typeof sessionToken === "string" ? "session" : typeof cookieToken === "string" ? "cookie" : "none"})`;
+  res.status(403).render("error", {
+    pageTitle: "Forbidden",
+    message: "Invalid security token. Please go back, refresh the page, and try again.",
+    user: req.user ?? null,
+  });
+}
+
+function safeEq(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
 }
 
 // ── auth gates ───────────────────────────────────────────────────────────────

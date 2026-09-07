@@ -48,8 +48,8 @@ export interface CommonLocals {
   path: string;
 }
 
-export async function commonLocals(req: Request, _res: Response): Promise<CommonLocals> {
-  const csrf = issueCsrfToken(req);
+export async function commonLocals(req: Request, res: Response): Promise<CommonLocals> {
+  const csrf = issueCsrfToken(req, res);
   let unread = 0;
   if (req.user) {
     unread = await store.unreadNotificationCount(req.user.handle);
@@ -72,7 +72,7 @@ export function notFound(req: Request, res: Response, _next: NextFunction): void
     message:
       "The page you're looking for doesn't exist… or moved, or was never here. Very 2004.",
     user: req.user ?? null,
-    csrf: issueCsrfToken(req),
+    csrf: issueCsrfToken(req, res),
     siteName: config.siteName,
     siteTagline: config.siteTagline,
     unreadNotifications: 0,
@@ -94,7 +94,7 @@ export function serverError(
     message:
       "An internal error occurred. It's not you, it's us. The admins have been notified (well, the log file has).",
     user: req.user ?? null,
-    csrf: issueCsrfToken(req),
+    csrf: issueCsrfToken(req, res),
     siteName: config.siteName,
     siteTagline: config.siteTagline,
     unreadNotifications: 0,
