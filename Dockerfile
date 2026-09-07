@@ -9,7 +9,7 @@
 # ── deps: install production dependencies ───────────────────────────────────
 # (tsx is a regular dependency, so it survives --omit=dev. Build tools are
 #  only needed if a native module has no musl prebuild for this platform.)
-FROM node:24.20-trixie-slim AS deps
+FROM node:24.20-trixie AS deps
 WORKDIR /app
 RUN apt install --no-cache python3 make g++
 COPY package.json package-lock.json ./
