@@ -50,9 +50,12 @@ async function profilePage(
   const hasPendingRequest =
     viewer !== undefined &&
     (await store.listPendingRequestsFrom(viewer.handle)).some((r) => r.toHandle === handle);
-  const hasIncomingRequest =
-    viewer !== undefined &&
-    (await store.listPendingRequestsTo(viewer.handle)).some((r) => r.fromHandle === handle);
+  const incomingRequest =
+    viewer !== undefined
+      ? (await store.listPendingRequestsTo(viewer.handle)).find((r) => r.fromHandle === handle) ??
+        null
+      : null;
+  const hasIncomingRequest = incomingRequest !== null;
   const { items } = await store.listPosts({
     authorHandle: handle,
     viewerHandle: viewer?.handle,
@@ -148,6 +151,7 @@ async function profilePage(
     isFriend,
     hasPendingRequest,
     hasIncomingRequest,
+    incomingRequestId: incomingRequest?.id ?? null,
     friendCount,
     friends: friends.filter((f) => f !== null),
     pendingCount,

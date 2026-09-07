@@ -14,9 +14,10 @@ import {
   rejectFediverseFollow,
 } from "../../services/fediverseFollows.js";
 import { getFederation } from "../../app.js";
+import { config } from "../../config.js";
 import { csrfGuard, requireLogin } from "../../security/auth.js";
 import { commonLocals, flash } from "../helpers.js";
-import { escapeHtml, isoNow, newId, stripHtml } from "../../util.js";
+import { escapeHtml, isoNow, newId, parseHttpUrl, stripHtml } from "../../util.js";
 import { sanitizePostHtml } from "../../security/sanitize.js";
 import type { PostRecord, RemoteActorRecord } from "../../types.js";
 
@@ -107,6 +108,16 @@ router.post("/fediverse/follow", requireLogin, csrfGuard, async (req: Request, r
   if (remote.suspended) {
     flash(req, "error", "That account is blocked on this server.");
     res.redirect("/fediverse");
+    return;
+  }
+  // Actors hosted on this instance (including yourself) are local users, not
+  // fediverse accounts: following them over federation would just loop the
+  // Follow back into our own inbox. Local users befriend each other with
+  // friend requests instead.
+  const ownHost = new URL(config.mayaUrl).host;
+  if (parseHttpUrl(remote.actorId)?.host === ownHost) {
+    flash(req, "error", "That's a MayaSpace user — send them a friend request instead.");
+    res.redirect(req.get("referer") ?? "/fediverse");
     return;
   }
   const ok = await sendFollow(federation, req.user!.handle, remote);

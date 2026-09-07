@@ -29,7 +29,7 @@ import { config } from "../config.js";
 import { appLog } from "../logger.js";
 import { store, Store } from "../store.js";
 import type { FediverseFollowRecord, PostRecord, RemoteActorRecord } from "../types.js";
-import { isoNow, newId, stripHtml } from "../util.js";
+import { isoNow, newId, parseHttpUrl, stripHtml } from "../util.js";
 import { sanitizePostHtml } from "../security/sanitize.js";
 import { getActorKeyPairs } from "./keys.js";
 import { resolveRemoteActor } from "./remote.js";
@@ -204,7 +204,16 @@ function setupInboxListeners(
       const remote = await resolveRemoteActor(ctx, followerId);
       if (!remote || remote.suspended) return;
 
+      // Defense in depth: an actor hosted on this very instance (e.g. a user
+      // following their own IRI) must not loop back through our own inbox —
+      // local users befriend each other via friend requests instead.
+      if (parseHttpUrl(remote.actorId)?.host === new URL(config.mayaUrl).host) {
+        log.debug`Ignoring self/own-instance follow: ${remote.handle} -> ${localHandle}`;
+        return;
+      }
+
       // Queue a follow request for the local user to approve — the actor
+      // advertises manuallyApprovesFollowers. An already-approved follower
       // advertises manuallyApprovesFollowers. An already-approved follower
       // re-sending Follow (key re-sync, server migration…) is re-confirmed
       // immediately instead of being demoted back to pending.
