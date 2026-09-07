@@ -8,7 +8,7 @@ alerts — and a full fediverse bridge, so `alice@yourinstance.example` can foll
 followed by Mastodon, Misskey, GoToSocial, and friends.
 
 ```
-★ mayaSPACE — A place for friends. ★ Now federating with the entire fediverse ★
+★ MayaSpace — A place for friends. ★ Now federating with the entire fediverse ★
 ```
 
 ---
@@ -21,8 +21,8 @@ cp .env.example .env        # then edit values (see below)
 sh run-bg.sh                # starts in the background, logs to ./logs/mayaspace-<unix-ts>.log
 ```
 
-Then open <http://localhost:3000>. Health check: `/healthz`. Stop with
-`pkill -f tsx src/index.ts` (or `kill $(lsof -ti :3000)`).
+Then open <http://localhost:3414>. Health check: `/healthz`. Stop with
+`pkill -f tsx src/index.ts` (or `kill $(lsof -ti :3414)`).
 
 Fore-ground dev with auto-restart: `npm run dev`.
 
@@ -34,8 +34,8 @@ Fore-ground dev with auto-restart: `npm run dev`.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MAYA_URL` | `http://localhost:3000` | **Canonical public origin** — every actor/note IRI is minted from it. Must be reachable by remote servers for federation. |
-| `PORT` | `3000` | HTTP port. |
+| `MAYA_URL` | `http://localhost:3414` | **Canonical public origin** — every actor/note IRI is minted from it. Must be reachable by remote servers for federation. |
+| `PORT` | `3414` | HTTP port. |
 | `SITE_NAME` / `SITE_TAGLINE` | `MayaSpace` / `A place for friends.` | Shown in the topbar/marquee/footer + NodeInfo. |
 | `SESSION_SECRET` | — (dev: ephemeral) | ≥ 32 chars; **required in production**. |
 | `ADMIN_HANDLES` / `MODERATOR_HANDLES` | — | Comma-separated handles. **Anyone who registers one of these handles is auto-promoted** to admin/moderator at registration (and re-promoted at each login). |
@@ -163,6 +163,14 @@ reach your actors. Once public:
 - From MayaSpace: `/fediverse` → look up `someone@some-server` → **Follow** —
   their new posts mirror into `/fediverse` and likes flow back.
 
+## Docker guide
+
+```
+cp .env.example .env
+nano .env
+docker compose up -d --build
+```
+
 ## License
 
-MIT — with 100% fewer glitter GIF auto-play ads than the original.
+SPL-R5

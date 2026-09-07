@@ -1,0 +1,18 @@
+# Keep secrets and runtime state out of the image build context.
+.git
+.env
+.env.*
+!.env.example
+
+node_modules
+data
+logs
+dist
+*.log
+
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+README.md
+run-bg.sh
