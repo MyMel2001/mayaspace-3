@@ -7,6 +7,16 @@
  *    Delete for moderation.
  */
 import { createFederationBuilder } from "@fedify/fedify";
+import {
+  getAuthenticatedDocumentLoader,
+  getDocumentLoader,
+  kvCache,
+  type DocumentLoaderFactory,
+  type GetUserAgentOptions,
+  type HttpMessageSignaturesSpec,
+  type HttpMessageSignaturesSpecDeterminer,
+  type KvStore,
+} from "@fedify/fedify";
 import type { Context, RequestContext } from "@fedify/fedify";
 import {
   Accept,
@@ -502,6 +512,89 @@ function setupInboxListeners(
 
 const builder = createFederationBuilder<unknown>();
 
+// ── signed document loader factories ─────────────────────────────────────────
+
+/**
+ * Signed (authenticated) document loaders for the federation, keyed by the
+ * instance service actor. Fedify's built-in loaders fetch remote key/actor
+ * documents UNSIGNED; servers with authorized fetch enabled (mastodon.social,
+ * most of the modern fediverse) answer those with 401. Two breakages follow:
+ *  - inbound deliveries fail signature verification because the sender's
+ *    keyId cannot be dereferenced ("Failed to verify the request's HTTP
+ *    Signatures" → 401 on POST /inbox), and
+ *  - outbound lookups (resolveRemoteActor, activity dereferences) fail with
+ *    "Failed to fetch document: 401".
+ * Wrapping the factories with these signed loaders fixes both: the document
+ * loader signs with {mayaUrl}/users/mayaspace#main-key via double-knocking
+ * (draft-cavage → rfc9421) and remote servers dereference that keyId from our
+ * publicly served actor document. Non-authorized-fetch servers accept signed
+ * requests too, so this is a pure upgrade.
+ *
+ * The document loader stays uncached like Fedify's own authenticated loader
+ * (freshness matters for signature-key verification). The CONTEXT loader
+ * remains unsigned + KV-cached: JSON-LD @context documents are static
+ * vocabulary files on w3.org/w3id.org, which never require authorized fetch —
+ * signing them would only add per-fetch round trips, and the cache keeps
+ * preloaded contexts off the network entirely.
+ *
+ * NOTE: documentLoaderFactory/contextLoaderFactory cannot be combined with
+ * the allowPrivateAddress or userAgent build options, so dev-mode private
+ * address access and the User-Agent are baked into the factories here.
+ */
+
+/** Remembers which HTTP-signature spec each remote origin accepted. */
+class KvSpecDeterminer implements HttpMessageSignaturesSpecDeterminer {
+  constructor(
+    private readonly kv: KvStore,
+    private readonly defaultSpec: HttpMessageSignaturesSpec = "rfc9421",
+  ) {}
+  async determineSpec(origin: string): Promise<HttpMessageSignaturesSpec> {
+    const stored = await this.kv.get<HttpMessageSignaturesSpec>([
+      "_fedify",
+      "httpMessageSignaturesSpec",
+      origin,
+    ]);
+    return stored ?? this.defaultSpec;
+  }
+  async rememberSpec(origin: string, spec: HttpMessageSignaturesSpec): Promise<void> {
+    await this.kv.set(["_fedify", "httpMessageSignaturesSpec", origin], spec);
+  }
+}
+
+async function createSignedLoaderFactories(
+  kv: KvStore,
+): Promise<{
+  documentLoaderFactory: DocumentLoaderFactory;
+  contextLoaderFactory: DocumentLoaderFactory;
+}> {
+  const factoryOptions = {
+    userAgent: { url: new URL(config.mayaUrl) } satisfies GetUserAgentOptions,
+    // Mirror the federation's SSRF policy: on localhost/LAN dev instances the
+    // remote side is a private address too, so the guard must not block
+    // resolution. In production this stays false.
+    allowPrivateAddress: config.allowPrivateFediverseAddresses,
+  };
+  // Resolve the service actor's RSA key pair up front (the store is already
+  // initialized by the time initFederation runs); the factory closes over it.
+  const pairs = await getActorKeyPairs(SERVICE_ACTOR_HANDLE);
+  const rsa = pairs.find((p) => p.privateKey.algorithm.name === "RSASSA-PKCS1-v1_5");
+  if (!rsa) {
+    throw new Error("Service actor has no RSASSA-PKCS1-v1_5 key for signed fetching");
+  }
+  const identity = { keyId: new URL(`${config.mayaUrl}/users/${SERVICE_ACTOR_HANDLE}#main-key`), privateKey: rsa.privateKey };
+  const specDeterminer = new KvSpecDeterminer(kv);
+  return {
+    documentLoaderFactory: () =>
+      getAuthenticatedDocumentLoader(identity, { ...factoryOptions, specDeterminer }),
+    contextLoaderFactory: () =>
+      kvCache({
+        loader: getDocumentLoader(factoryOptions),
+        kv,
+        kind: "context",
+      }),
+  };
+}
+
 export async function initFederation() {
   builder
     .setActorDispatcher("/users/{identifier}", actorDispatcher)
@@ -566,14 +659,28 @@ export async function initFederation() {
   }));
 
   const { kv, queue } = await makePersistentKv();
+  // Signed document loaders: all Fedify-side remote fetches (inbound signature
+  // key dereferences, outbound lookups/activity resolution) are signed with
+  // the service actor key so authorized-fetch servers (mastodon.social et al.)
+  // don't 401 them. See createSignedLoaderFactories above. If the service
+  // actor's keys cannot be produced, fall back to the built-in unsigned
+  // loaders and retain the SSRF option for dev instances.
+  let signedFactories: Awaited<ReturnType<typeof createSignedLoaderFactories>> | null = null;
+  try {
+    signedFactories = await createSignedLoaderFactories(kv);
+  } catch (err) {
+    log.warn`Falling back to unsigned document loaders (service actor keys unavailable): ${err}`;
+  }
   const federation = await builder.build({
     kv,
     queue,
-    // Localhost/LAN dev instances talk to other localhost/LAN instances; the
-    // default (production) policy blocks those as SSRF-protected addresses.
-    ...(config.allowPrivateFediverseAddresses ? { allowPrivateAddress: true as const } : {}),
+    ...(signedFactories ?? {
+      // Localhost/LAN dev instances talk to other localhost/LAN instances; the
+      // default (production) policy blocks those as SSRF-protected addresses.
+      ...(config.allowPrivateFediverseAddresses ? { allowPrivateAddress: true as const } : {}),
+    }),
   });
-  log.info`Federation initialized for ${config.mayaUrl}`;
+  log.info`Federation initialized for ${config.mayaUrl} (${signedFactories ? "signed" : "unsigned"} document loaders)`;
   return federation;
 }
 

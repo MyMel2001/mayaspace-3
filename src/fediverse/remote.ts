@@ -4,14 +4,16 @@
  *
  * Many servers (mastodon.social with authorized fetch enabled, for example)
  * reject unsigned GETs of actor documents with 401, so every lookup below is
- * signed with the instance service actor's key. When even the signed fetch
- * fails (dev instances on localhost — the remote cannot dereference our
- * keyId), we fall back to WebFinger-only resolution and cache a minimal
- * "stub" actor record so the profile page still works with an outbound link.
+ * signed with the instance service actor's key. The federation is built with
+ * signed documentLoaderFactory (see federation.ts), so ctx.lookupObject already
+ * dereferences documents with the service actor's signature — no per-call
+ * loader override needed. When even the signed fetch fails (dev instances on
+ * localhost — the remote cannot dereference our keyId), we fall back to
+ * WebFinger-only resolution and cache a minimal "stub" actor record so the
+ * profile page still works with an outbound link.
  */
 import type { Context } from "@fedify/fedify";
 import * as vocab from "@fedify/vocab";
-import { getAuthenticatedDocumentLoader } from "@fedify/fedify";
 import { lookupWebFinger } from "@fedify/webfinger";
 import { config } from "../config.js";
 import { appLog } from "../logger.js";
@@ -19,7 +21,6 @@ import { store } from "../store.js";
 import type { RemoteActorRecord } from "../types.js";
 import { isoNow, parseHttpUrl, parseRemoteHandle } from "../util.js";
 import { sanitizeTextHtml } from "../security/sanitize.js";
-import { getActorKeyPairs } from "./keys.js";
 
 const log = appLog("fediverse.remote");
 
@@ -93,45 +94,6 @@ function isActorLike(doc: vocab.Object): doc is vocab.Person | vocab.Service | v
 }
 
 /**
- * A signed document loader for lookups, keyed by the instance service actor.
- * Servers with authorized fetch dereference the keyId to verify signatures;
- * when MAYA_URL isn't publicly routable that verification fails and the
- * caller falls back to WebFinger-only resolution.
- */
-let signedLoaderCache: { keyId: string; loader: ReturnType<typeof getAuthenticatedDocumentLoader> } | null = null;
-
-async function getSignedLoader(): Promise<
-  ((url: string, options?: { signal?: AbortSignal }) => Promise<vocab.RemoteDocument>) | null
-> {
-  try {
-    const keyId = `${config.mayaUrl}/users/${SERVICE_ACTOR_HANDLE}#main-key`;
-    if (signedLoaderCache?.keyId === keyId) return signedLoaderCache.loader;
-    const pairs = await getActorKeyPairs(SERVICE_ACTOR_HANDLE);
-    const rsa = pairs.find((p) => p.privateKey.algorithm.name === "RSASSA-PKCS1-v1_5");
-    if (!rsa) return null;
-    // Mirror the federation's allowPrivateAddress policy: on localhost dev
-    // instances the remote side is a private address too, and the SSRF guard
-    // must not block resolving it. Without this the signed loader (passed
-    // explicitly into ctx.lookupObject) overrides Fedify's default loader and
-    // every remote-actor resolution fails on dev.
-    const loader = getAuthenticatedDocumentLoader(
-      {
-        keyId: new URL(keyId),
-        privateKey: rsa.privateKey,
-      },
-      {
-        ...(config.allowPrivateFediverseAddresses ? { allowPrivateAddress: true } : {}),
-      },
-    ) as unknown as (url: string, options?: { signal?: AbortSignal }) => Promise<vocab.RemoteDocument>;
-    signedLoaderCache = { keyId, loader };
-    return loader;
-  } catch (err) {
-    log.debug`Failed to build signed document loader: ${err}`;
-    return null;
-  }
-}
-
-/**
  * WebFinger-only resolution: even when the remote refuses to serve us the
  * actor document, its WebFinger endpoint tells us the actor's canonical IRI
  * and HTML profile URL. We cache a stub record so profiles still render with
@@ -185,15 +147,13 @@ export async function resolveRemoteActor(
   ctx: Context<unknown>,
   ref: string,
 ): Promise<RemoteActorRecord | null> {
-  const loader = await getSignedLoader();
-
   // Handle form: user@host (with optional leading @)
   if (ref.includes("@") && !ref.startsWith("http")) {
     const handleForm = ref.replace(/^@+/, "");
     try {
-      const doc = await ctx.lookupObject(`acct:${handleForm}`, {
-        ...(loader ? { documentLoader: loader, contextLoader: loader } : {}),
-      });
+      // The federation's signed documentLoaderFactory (federation.ts) already
+      // signs lookups with the service actor key — no override needed here.
+      const doc = await ctx.lookupObject(`acct:${handleForm}`);
       if (doc !== null && isActorLike(doc) && doc.id !== null) {
         return await upsertRemoteActorFromPerson(doc.id, doc);
       }
@@ -219,11 +179,8 @@ export async function refreshRemoteActor(
   ctx: Context<unknown>,
   actorId: string,
 ): Promise<RemoteActorRecord | null> {
-  const loader = await getSignedLoader();
   try {
-    const doc = await ctx.lookupObject(new URL(actorId), {
-      ...(loader ? { documentLoader: loader, contextLoader: loader } : {}),
-    });
+    const doc = await ctx.lookupObject(new URL(actorId));
     if (doc !== null && isActorLike(doc) && doc.id !== null) {
       return await upsertRemoteActorFromPerson(doc.id, doc);
     }
