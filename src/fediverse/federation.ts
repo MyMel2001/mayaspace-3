@@ -739,12 +739,24 @@ export async function sendFollow(
   localHandle: string,
   remote: RemoteActorRecord,
 ): Promise<boolean> {
-  const followActivityId = `${config.mayaUrl}/activities/${newId()}`;
+  const existing = await store.getRemoteFollow(localHandle, remote.actorId);
+  if (existing?.state === "active") return true;
+  const followActivityId = existing?.followActivityId ?? `${config.mayaUrl}/activities/${newId()}`;
   const follow = new Follow({
     id: new URL(followActivityId),
     actor: ctx.getActorUri(localHandle),
     object: new URL(remote.actorId),
     to: new URL(remote.actorId),
+  });
+  // Persist before delivery: a remote inbox may synchronously return Accept,
+  // which otherwise reaches our listener before the pending row exists.
+  await store.upsertRemoteFollow({
+    id: `${localHandle}|${remote.actorId}`,
+    localHandle,
+    remoteActorId: remote.actorId,
+    state: "pending",
+    followActivityId,
+    createdAt: existing?.createdAt ?? isoNow(),
   });
   try {
     await ctx.sendActivity(
@@ -752,17 +764,10 @@ export async function sendFollow(
       { id: new URL(remote.actorId), inboxId: new URL(remote.inbox) },
       follow,
     );
-    await store.upsertRemoteFollow({
-      id: `${localHandle}|${remote.actorId}`,
-      localHandle,
-      remoteActorId: remote.actorId,
-      state: "pending",
-      followActivityId,
-      createdAt: isoNow(),
-    });
     log.debug`Follow sent: ${localHandle} -> ${remote.handle}`;
     return true;
   } catch (err) {
+    if (!existing) await store.deleteRemoteFollow(localHandle, remote.actorId);
     log.error`Follow delivery failed: ${err}`;
     return false;
   }
@@ -875,9 +880,14 @@ export async function sendFollowAccept(
   const accept = new Accept({
     id: new URL(`${config.mayaUrl}/activities/${newId()}`),
     actor: ctx.getActorUri(follow.localHandle),
+    // Remote implementations commonly require the original Follow's actor and
+    // object, not only its IRI, when matching an approval.
     object: follow.followActivityId
-      ? // Reconstruct a minimal reference to the original Follow activity.
-        new Follow({ id: new URL(follow.followActivityId) })
+      ? new Follow({
+          id: new URL(follow.followActivityId),
+          actor: new URL(remote.actorId),
+          object: ctx.getActorUri(follow.localHandle),
+        })
       : undefined,
     to: new URL(remote.actorId),
   });
@@ -904,7 +914,11 @@ export async function sendFollowReject(
     id: new URL(`${config.mayaUrl}/activities/${newId()}`),
     actor: ctx.getActorUri(follow.localHandle),
     object: follow.followActivityId
-      ? new Follow({ id: new URL(follow.followActivityId) })
+      ? new Follow({
+          id: new URL(follow.followActivityId),
+          actor: new URL(remote.actorId),
+          object: ctx.getActorUri(follow.localHandle),
+        })
       : undefined,
     to: new URL(remote.actorId),
   });
