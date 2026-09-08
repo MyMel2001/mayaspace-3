@@ -93,10 +93,18 @@ router.post(
 );
 
 router.post("/posts/:id/delete", requireLogin, csrfGuard, async (req: Request, res: Response) => {
-  const ok = await deletePost(req.user!.handle, req.user!.role, String(req.params.id));
+  const postId = String(req.params.id);
+  const targetPost = await store.getPost(postId);
+  const ok = await deletePost(req.user!.handle, req.user!.role, postId);
   if (!ok) {
     flash(req, "error", "Couldn't delete that post.");
   } else {
+    const federation = getFederation();
+    if (federation && targetPost && targetPost.authorType === "local" && targetPost.visibility === "public") {
+      void sendDeleteNote(federation, targetPost).catch((err) => {
+        console.error("[posts] federation delete fan-out failed:", err);
+      });
+    }
     flash(req, "info", "Post deleted.");
   }
   res.redirect("/");

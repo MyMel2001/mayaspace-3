@@ -14,6 +14,8 @@ import {
 import { csrfGuard, requireRole } from "../../security/auth.js";
 import { runJobNow, schedulerStatus } from "../../scheduler.js";
 import { runFederationSelfTest } from "../../fediverse/selftest.js";
+import { sendDeleteNote } from "../../fediverse/federation.js";
+import { getFederation } from "../../app.js";
 import { parseHttpUrl } from "../../util.js";
 import { commonLocals, flash } from "../helpers.js";
 
@@ -90,8 +92,13 @@ router.post("/admin/role", requireRole("admin"), csrfGuard, async (req: Request,
 router.post("/admin/delete-post", requireRole("admin", "moderator"), csrfGuard, async (req: Request, res: Response) => {
   const body = req.body as Record<string, unknown>;
   const postId = String(body.postId ?? "");
+  const post = await store.getPost(postId);
   const { moderateDeletePost } = await import("../../services/moderation.js");
   const ok = await moderateDeletePost(req.user!, postId);
+  if (ok && post?.authorType === "local" && post.visibility === "public") {
+    const federation = getFederation();
+    if (federation) void sendDeleteNote(federation, post).catch(() => {});
+  }
   flash(req, ok ? "success" : "error", ok ? "Post removed." : "Post not found.");
   res.redirect("/admin");
 });

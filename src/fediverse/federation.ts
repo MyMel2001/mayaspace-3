@@ -213,10 +213,10 @@ const followingDispatcher = async (
 // ── inbox listeners ──────────────────────────────────────────────────────────
 
 function postIdFromApId(apId: string): string | null {
-  if (apId.startsWith(config.mayaUrl)) {
-    return apId.split("/posts/")[1]?.split(/[?#]/)[0] ?? null;
-  }
-  return null;
+  const url = parseHttpUrl(apId);
+  const base = new URL(config.mayaUrl);
+  if (!url || url.origin !== base.origin || !url.pathname.startsWith("/posts/")) return null;
+  return url.pathname.slice("/posts/".length).split("/")[0] ?? null;
 }
 
 async function resolvePostRef(
@@ -351,7 +351,7 @@ function setupInboxListeners(
       if (await store.getPostByApId(apId)) return; // dedupe
       const actorId = create.actorId?.href;
       if (!actorId) return;
-      const remote = await store.getRemoteActor(actorId);
+      const remote = await resolveRemoteActor(ctx, actorId);
       if (!remote || remote.suspended) return;
 
       const content = object.content !== null ? sanitizePostHtml(String(object.content)) : "";
@@ -487,18 +487,21 @@ function setupInboxListeners(
     })
     .on(Delete, async (_ctx, del) => {
       const objectId = del.objectId?.href;
-      if (!objectId) return;
+      const actorId = del.actorId?.href;
+      if (!objectId || !actorId) return;
       const post = await store.getPostByApId(objectId);
-      if (post) await store.updatePost(post.id, { deleted: true });
+      if (!post || post.remoteActorId !== actorId) return;
+      await store.updatePost(post.id, { deleted: true });
       log.debug`Remote Delete: ${objectId}`;
     })
     .on(Update, async (_ctx, update) => {
       const object = await update.getObject();
       if (!(object instanceof Note)) return;
       const apId = object.id?.href;
-      if (!apId) return;
+      const actorId = update.actorId?.href;
+      if (!apId || !actorId) return;
       const existing = await store.getPostByApId(apId);
-      if (!existing) return;
+      if (!existing || existing.remoteActorId !== actorId) return;
       const content = object.content !== null ? sanitizePostHtml(String(object.content)) : existing.html;
       await store.updatePost(existing.id, {
         html: content,
@@ -805,7 +808,7 @@ export async function sendUnfollow(
 }
 
 export async function sendCreateNote(ctx: Context<unknown>, post: PostRecord): Promise<void> {
-  if (post.authorType !== "local") return;
+  if (post.authorType !== "local" || post.visibility !== "public") return;
   const note = new Note({
     id: noteIdFor(post.id),
     attribution: ctx.getActorUri(post.authorHandle),

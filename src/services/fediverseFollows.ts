@@ -37,14 +37,12 @@ export async function acceptFediverseFollow(
     const federation = getFederation();
     remote = federation ? await ensureRemoteActor(federation, remoteActorId) : null;
   }
-  // Deliver Accept first so the remote starts treating the follow as live;
-  // delivery failures are logged, not fatal (retry via re-follow). When even
-  // the actor record is unrecoverable we still confirm locally: a pending
-  // request must never strand forever with an Accept button that always
-  // errors.
   const federation = getFederation();
-  if (federation && remote && follow.followActivityId !== null) {
-    await sendFollowAccept(federation, follow, remote);
+  if (!federation || !remote || follow.followActivityId === null) {
+    return { ok: false, error: "Couldn't deliver approval. Try again after the remote account is reachable." };
+  }
+  if (!(await sendFollowAccept(federation, follow, remote))) {
+    return { ok: false, error: "Couldn't deliver approval. The request is still pending; try again later." };
   }
   await store.setFediverseFollowState(localHandle, remoteActorId, "active");
   return { ok: true };
