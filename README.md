@@ -168,6 +168,23 @@ reach your actors. Once public:
 - From MayaSpace: `/fediverse` → look up `someone@some-server` → **Follow** —
   their new posts mirror into `/fediverse` and likes flow back.
 
+## Project architecture (as of Sep. 8th 2026 - 2:38am)
+
+flowchart TB
+  Env[.env / process env] --> Config[src/config.ts]
+  Config --> Store[src/store.ts]
+  Config --> App[src/app.ts]
+  App --> Routes[src/web/routes/*]
+  App --> Services[src/services/*]
+  App --> Security[src/security/*]
+  App --> Federation[src/fediverse/*]
+  Services --> Store
+  Routes --> Services
+  Federation --> Store
+  Main[src/index.ts] --> App
+  Main --> Scheduler[src/scheduler.ts]
+
+
 ## License
 
 SPL-R5
