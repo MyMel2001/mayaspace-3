@@ -109,10 +109,20 @@ async function getSignedLoader(): Promise<
     const pairs = await getActorKeyPairs(SERVICE_ACTOR_HANDLE);
     const rsa = pairs.find((p) => p.privateKey.algorithm.name === "RSASSA-PKCS1-v1_5");
     if (!rsa) return null;
-    const loader = getAuthenticatedDocumentLoader({
-      keyId: new URL(keyId),
-      privateKey: rsa.privateKey,
-    }) as unknown as (url: string, options?: { signal?: AbortSignal }) => Promise<vocab.RemoteDocument>;
+    // Mirror the federation's allowPrivateAddress policy: on localhost dev
+    // instances the remote side is a private address too, and the SSRF guard
+    // must not block resolving it. Without this the signed loader (passed
+    // explicitly into ctx.lookupObject) overrides Fedify's default loader and
+    // every remote-actor resolution fails on dev.
+    const loader = getAuthenticatedDocumentLoader(
+      {
+        keyId: new URL(keyId),
+        privateKey: rsa.privateKey,
+      },
+      {
+        ...(config.allowPrivateFediverseAddresses ? { allowPrivateAddress: true } : {}),
+      },
+    ) as unknown as (url: string, options?: { signal?: AbortSignal }) => Promise<vocab.RemoteDocument>;
     signedLoaderCache = { keyId, loader };
     return loader;
   } catch (err) {
@@ -132,7 +142,9 @@ async function stubActorFromWebFinger(ref: string): Promise<RemoteActorRecord | 
   if (!parsed) return null;
   const handle = `${parsed.user}@${parsed.host}`;
   try {
-    const jrd = await lookupWebFinger(`acct:${handle}`);
+    const jrd = await lookupWebFinger(`acct:${handle}`, {
+      ...(config.allowPrivateFediverseAddresses ? { allowPrivateAddress: true } : {}),
+    });
     if (jrd === null) return null;
     const selfLink = jrd.links?.find(
       (l) => l.rel === "self" && (l.type === "application/activity+json" || l.type?.startsWith("application/ld+json")),

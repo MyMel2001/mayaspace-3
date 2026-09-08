@@ -627,6 +627,11 @@ export class Store {
     return all.filter((f) => f.localHandle === localHandle);
   }
 
+  /** Every outbound follow record (all local users). */
+  async allRemoteFollows(): Promise<RemoteFollowRecord[]> {
+    return this.all(this.remoteFollows);
+  }
+
   /** Local users that follow a given remote actor (confirmed only). */
   async listRemoteFollowersOf(actorId: string): Promise<RemoteFollowRecord[]> {
     const all = await this.all(this.remoteFollows);

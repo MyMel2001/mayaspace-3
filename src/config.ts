@@ -100,6 +100,13 @@ if (isProd) {
 
 const trustProxyHops = int("TRUST_PROXY", 0);
 
+// Dev instances run on localhost/LAN origins, where the remote side is also a
+// private address: Fedify refuses to fetch actor documents or WebFinger
+// descriptors on such hosts unless explicitly allowed. Production instances
+// (public MAYA_URL) must never enable it.
+const allowPrivateFediverseAddresses =
+  !isProd && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|[^/]*\.localhost)(:\d+)?$/i.test(mayaUrl);
+
 // A https MAYA_URL with zero trusted proxies means TLS terminates elsewhere
 // (Cloudflare/nginx/Caddy…). Express then believes requests are plain HTTP,
 // express-session suppresses its `secure` cookie, and login sessions never
@@ -131,6 +138,8 @@ export const config = {
   cookieSecure:
     cookieSecureRaw === "auto" ? mayaUrl.startsWith("https://") : cookieSecureRaw === "true",
   trustProxy: trustProxyHops,
+  /** Allow fetching private/localhost fediverse URLs (localhost-only dev). */
+  allowPrivateFediverseAddresses,
   logLevel: str("LOG_LEVEL", isProd ? "info" : "debug"),
   /** Software identity reported via NodeInfo. */
   software: { name: "mayaspace", version: "1.0.0" },

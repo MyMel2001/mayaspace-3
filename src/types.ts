@@ -110,6 +110,7 @@ export interface RemoteFollowRecord {
   localHandle: string;
   remoteActorId: string;
   state: "pending" | "active";
+  followActivityId: string | null; // IRI of our Follow activity (dereferenceable via /activities/{id})
   createdAt: string;
 }
 

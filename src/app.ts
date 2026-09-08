@@ -42,6 +42,7 @@ let federationContext: Context<unknown> | null = null;
 const FEDIVERSE_PREFIXES = [
   "/users/",
   "/posts/",
+  "/activities/",
   "/inbox",
   "/nodeinfo",
   "/.well-known/webfinger",

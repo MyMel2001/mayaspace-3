@@ -13,6 +13,7 @@ import {
   Announce,
   Create,
   Delete,
+  Endpoints,
   Follow,
   Image,
   Like,
@@ -74,29 +75,48 @@ const actorDispatcher = async (
 ): Promise<Person | Service | Tombstone | null> => {
   const handle = decodeURIComponent(identifier).toLowerCase();
 
+  const actorId = ctx.getActorUri(handle);
+  const inbox = ctx.getInboxUri(handle);
+
+  // Public keys MUST be embedded in the served actor document: remote servers
+  // verify our outbound HTTP signatures by dereferencing keyId
+  // ({actorId}#main-key) and expect to find the key there. Without it every
+  // Follow/Accept/Reject we deliver 401s on the remote side — follows stay
+  // "pending" forever and Accept/Reject confirmations are silently dropped.
+  // assertionMethod (FEP-521a Multikey) is published alongside for
+  // spec-compliant verifiers.
+  const keyPairs = await ctx.getActorKeyPairs(handle);
+  // keys.ts registers the RSA pair first and Ed25519 second, and Fedify names
+  // them "#main-key" / "#key-2" in registration order — index-select rather
+  // than peeking at privateKey (whose base type is unavailable under this
+  // project's lib config).
+  const rsaKey = keyPairs[0]?.cryptographicKey ?? null;
+  const edMultikey = keyPairs[1]?.multikey ?? null;
+
+  // The shared inbox endpoint lets Mastodon deliver Follow/Undo to one URL
+  // instead of per-actor inboxes; without it some servers route deliveries we
+  // then can't attribute (ctx.recipient is null on shared-inbox POSTs).
+  const endpoints = new Endpoints({ sharedInbox: ctx.getInboxUri() });
+
   if (handle === SERVICE_ACTOR_HANDLE) {
-    // Touch the key pairs so they exist before anyone signs/verifies.
-    await getActorKeyPairs(handle);
-    const actorId = ctx.getActorUri(handle);
     return new Service({
       id: actorId,
       name: config.siteName,
       preferredUsername: "MayaSpace",
-      inbox: ctx.getInboxUri(handle),
+      inbox,
       outbox: ctx.getOutboxUri(handle),
+      endpoints,
       url: new URL(config.mayaUrl),
       manuallyApprovesFollowers: true,
       summary: `Official service actor for ${config.siteName} (${config.mayaUrl}).`,
+      ...(rsaKey ? { publicKey: rsaKey } : {}),
+      ...(edMultikey ? { assertionMethod: edMultikey } : {}),
     });
   }
 
   const user = await store.getUser(handle);
   if (!user || user.suspended) return null;
 
-  // Touch the key pairs so they exist before anyone signs/verifies.
-  await getActorKeyPairs(handle);
-
-  const actorId = ctx.getActorUri(handle);
   const icon: Image | null = user.avatar
     ? new Image({
         url: new URL(`${config.mayaUrl}/media/${user.avatar}`),
@@ -108,8 +128,9 @@ const actorDispatcher = async (
     id: actorId,
     name: user.displayName,
     preferredUsername: handle,
-    inbox: ctx.getInboxUri(handle),
+    inbox,
     outbox: ctx.getOutboxUri(handle),
+    endpoints,
     followers: ctx.getFollowersUri(handle),
     following: ctx.getFollowingUri(handle),
     liked: ctx.getLikedUri(handle),
@@ -118,6 +139,8 @@ const actorDispatcher = async (
     manuallyApprovesFollowers: true,
     published: toInstant(user.createdAt),
     icon,
+    ...(rsaKey ? { publicKey: rsaKey } : {}),
+    ...(edMultikey ? { assertionMethod: edMultikey } : {}),
   });
   return person;
 };
@@ -278,25 +301,36 @@ function setupInboxListeners(
       log.debug`Follow request queued: ${remote.handle} -> ${localHandle}`;
     })
     .on(Accept, async (_ctx, accept) => {
-      // A remote server confirmed our outbound Follow.
+      // A remote server confirmed our outbound Follow. The Follow may be
+      // embedded OR referenced by IRI only (Mastodon does the latter);
+      // getObject() can throw a dereference error on IRI-only Accepts whose
+      // targets aren't fetchable, so tolerate failure and fall back to actor
+      // matching (we keep one outbound follow per actor).
       const actorId = accept.actorId?.href;
       if (!actorId) return;
-      const object = await accept.getObject();
-      if (!(object instanceof Follow)) return;
+      let object = null;
+      try {
+        object = await accept.getObject({ suppressError: true });
+      } catch {
+        object = null;
+      }
+      const followIri = object instanceof Follow ? object.id?.href ?? null : null;
       for (const f of await store.remoteFollowsByActor(actorId)) {
-        if (f.state === "pending") {
-          await store.setRemoteFollowState(f.localHandle, actorId, "active");
-          await store.createNotification({
-            toHandle: f.localHandle,
-            type: "remote_accept",
-            actorHandle: null,
-            remoteActorId: actorId,
-            postId: null,
-            commentId: null,
-            message: `${actorId} accepted your follow request.`,
-          });
-          log.debug`Outbound follow confirmed: ${f.localHandle} -> ${actorId}`;
-        }
+        if (f.state !== "pending") continue;
+        // When both sides know the Follow IRI, require a match; otherwise
+        // actor-level matching is the only (and sufficient) signal.
+        if (followIri !== null && f.followActivityId !== null && f.followActivityId !== followIri) continue;
+        await store.setRemoteFollowState(f.localHandle, actorId, "active");
+        await store.createNotification({
+          toHandle: f.localHandle,
+          type: "remote_accept",
+          actorHandle: null,
+          remoteActorId: actorId,
+          postId: null,
+          commentId: null,
+          message: `${actorId} accepted your follow request.`,
+        });
+        log.debug`Outbound follow confirmed: ${f.localHandle} -> ${actorId}`;
       }
     })
     .on(Create, async (ctx, create) => {
@@ -488,6 +522,21 @@ export async function initFederation() {
 
   builder.setFollowingDispatcher("/users/{identifier}/following", followingDispatcher);
 
+  // Dereferenceable outbound Follow activities: remote servers verify an
+  // Accept/Undo by fetching the Follow IRI it references. Reconstruct the
+  // activity from the persisted outbound-follow record.
+  builder.setObjectDispatcher(Follow, "/activities/{id}", async (ctx, values) => {
+    const activityId = decodeURIComponent(values.id);
+    const follows = await store.allRemoteFollows();
+    const record = follows.find((f) => f.followActivityId?.endsWith(`/activities/${activityId}`));
+    if (!record) return null;
+    return new Follow({
+      id: new URL(`${config.mayaUrl}/activities/${activityId}`),
+      actor: ctx.getActorUri(record.localHandle),
+      object: new URL(record.remoteActorId),
+    });
+  });
+
   builder
     .setOutboxDispatcher("/users/{identifier}/outbox", async () => ({ items: [] }))
     .setCounter(() => 0);
@@ -520,6 +569,9 @@ export async function initFederation() {
   const federation = await builder.build({
     kv,
     queue,
+    // Localhost/LAN dev instances talk to other localhost/LAN instances; the
+    // default (production) policy blocks those as SSRF-protected addresses.
+    ...(config.allowPrivateFediverseAddresses ? { allowPrivateAddress: true as const } : {}),
   });
   log.info`Federation initialized for ${config.mayaUrl}`;
   return federation;
@@ -540,8 +592,9 @@ export async function sendFollow(
   localHandle: string,
   remote: RemoteActorRecord,
 ): Promise<boolean> {
+  const followActivityId = `${config.mayaUrl}/activities/${newId()}`;
   const follow = new Follow({
-    id: new URL(`${config.mayaUrl}/activities/${newId()}`),
+    id: new URL(followActivityId),
     actor: ctx.getActorUri(localHandle),
     object: new URL(remote.actorId),
     to: new URL(remote.actorId),
@@ -557,6 +610,7 @@ export async function sendFollow(
       localHandle,
       remoteActorId: remote.actorId,
       state: "pending",
+      followActivityId,
       createdAt: isoNow(),
     });
     log.debug`Follow sent: ${localHandle} -> ${remote.handle}`;
@@ -572,8 +626,14 @@ export async function sendUnfollow(
   localHandle: string,
   remote: RemoteActorRecord,
 ): Promise<boolean> {
+  // Reference the ORIGINAL Follow activity (Mastodon et al. reject Undos whose
+  // object doesn't match the Follow they accepted); fall back to a fresh IRI
+  // when the record predates followActivityId persistence.
+  const stored = await store.getRemoteFollow(localHandle, remote.actorId);
   const follow = new Follow({
-    id: new URL(`${config.mayaUrl}/activities/${newId()}`),
+    id: new URL(
+      stored?.followActivityId ?? `${config.mayaUrl}/activities/${newId()}`,
+    ),
     actor: ctx.getActorUri(localHandle),
     object: new URL(remote.actorId),
     to: new URL(remote.actorId),
