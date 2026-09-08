@@ -569,6 +569,7 @@ async function createSignedLoaderFactories(
 ): Promise<{
   documentLoaderFactory: DocumentLoaderFactory;
   contextLoaderFactory: DocumentLoaderFactory;
+  authenticatedDocumentLoaderFactory: typeof getAuthenticatedDocumentLoader;
 }> {
   const factoryOptions = {
     userAgent: { url: new URL(config.mayaUrl) } satisfies GetUserAgentOptions,
@@ -589,6 +590,11 @@ async function createSignedLoaderFactories(
   return {
     documentLoaderFactory: () =>
       getAuthenticatedDocumentLoader(identity, { ...factoryOptions, specDeterminer }),
+    // Inbound HTTP-signature verification fetches remote keyIds through this
+    // factory. Without it Fedify fetches them unsigned, which authorized-fetch
+    // servers such as mastodon.social reject with 401.
+    authenticatedDocumentLoaderFactory: (actorIdentity, options) =>
+      getAuthenticatedDocumentLoader(actorIdentity, { ...factoryOptions, ...options, specDeterminer }),
     contextLoaderFactory: () =>
       kvCache({
         loader: getDocumentLoader(factoryOptions),
