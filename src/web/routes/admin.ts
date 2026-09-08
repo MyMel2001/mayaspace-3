@@ -13,9 +13,29 @@ import {
 } from "../../services/moderation.js";
 import { csrfGuard, requireRole } from "../../security/auth.js";
 import { runJobNow, schedulerStatus } from "../../scheduler.js";
+import { runFederationSelfTest } from "../../fediverse/selftest.js";
+import { parseHttpUrl } from "../../util.js";
 import { commonLocals, flash } from "../helpers.js";
 
 const router = Router();
+
+/**
+ * Federation self-test: signed-fetch probes from this server itself. Admin-only
+ * JSON diagnostic for the "follows don't work" class of bugs — run it with the
+ * exact actor URL that fails, e.g.
+ * /admin/federation-selftest?url=https://mastodon.social/users/someone
+ */
+router.get("/admin/federation-selftest", requireRole("admin"), async (req: Request, res: Response) => {
+  const raw = typeof req.query.url === "string" ? req.query.url.trim() : "";
+  const target = raw === "" ? null : parseHttpUrl(raw);
+  if (target === null) {
+    res.status(400).json({
+      error: "Provide ?url=<remote actor/object URL> (must be an absolute http(s) URL).",
+    });
+    return;
+  }
+  res.json(await runFederationSelfTest(target));
+});
 
 router.get("/admin", requireRole("admin", "moderator"), async (req: Request, res: Response) => {
   const stats = await store.stats();

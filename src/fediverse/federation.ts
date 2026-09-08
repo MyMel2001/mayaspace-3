@@ -708,8 +708,17 @@ export async function initFederation() {
       ...(config.allowPrivateFediverseAddresses ? { allowPrivateAddress: true as const } : {}),
     }),
   });
+  signedLoadersActive = signedFactories !== null;
   log.info`Federation initialized for ${config.mayaUrl} (${signedFactories ? "signed" : "unsigned"} document loaders)`;
   return federation;
+}
+
+/** Whether outbound document fetches are signed with the service actor key. */
+let signedLoadersActive = false;
+
+/** Loader mode reported by the federation self-test endpoint. */
+export function documentLoaderMode(): string {
+  return signedLoadersActive ? "signed (service actor)" : "unsigned (fallback)";
 }
 
 /** Persistent KV on the same SQLite file via @fedify/sqlite (node:sqlite). */
