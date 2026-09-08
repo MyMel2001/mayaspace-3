@@ -598,6 +598,17 @@ async function createSignedLoaderFactories(
 export async function initFederation() {
   builder
     .setActorDispatcher("/users/{identifier}", actorDispatcher)
+    // WebFinger acct: resources resolve by username: MayaSpace actor
+    // identifiers ARE their lowercase handles, so the mapping is 1:1. Setting
+    // the mapper explicitly also keeps fedify from logging an error ("No
+    // actor handle mapper is set") on every remote handle lookup.
+    .mapAlias(
+      (_ctx: RequestContext<unknown>, resource: URL): { username: string } | null => {
+        if (!resource.protocol.startsWith("acct:")) return null;
+        const handle = resource.pathname.replace(/^@?/, "").split("@")[0].toLowerCase();
+        return /^[a-z0-9_]{3,20}$/.test(handle) ? { username: handle } : null;
+      },
+    )
     .setKeyPairsDispatcher(async (_ctx, identifier) => {
       const handle = decodeURIComponent(identifier).toLowerCase();
       return await getActorKeyPairs(handle);
@@ -670,6 +681,23 @@ export async function initFederation() {
     signedFactories = await createSignedLoaderFactories(kv);
   } catch (err) {
     log.warn`Falling back to unsigned document loaders (service actor keys unavailable): ${err}`;
+  }
+  // Authorized-fetch servers validate a signed request by dereferencing the
+  // keyId in its Signature header — the keyId IRI must therefore resolve over
+  // the public internet. A loopback/LAN MAYA_URL makes that impossible, so
+  // signed fetches to such servers keep 401ing no matter what the code does.
+  // Spell this out at boot instead of letting it surface as mysterious 401s.
+  const mayaUrlHost = new URL(config.mayaUrl).hostname;
+  if (
+    mayaUrlHost === "localhost" ||
+    mayaUrlHost.endsWith(".localhost") ||
+    mayaUrlHost === "127.0.0.1" ||
+    mayaUrlHost === "::1" ||
+    mayaUrlHost.startsWith("192.168.") ||
+    mayaUrlHost.startsWith("10.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(mayaUrlHost)
+  ) {
+    log.warn`MAYA_URL (${config.mayaUrl}) is not publicly routable. Federation with public servers WILL FAIL: they cannot dereference our actor IRIs or signature keyIds. Use a public https URL (or a tunnel like ngrok/cloudflared) for real cross-server federation. Localhost-to-localhost testing between two MayaSpace instances still works.`;
   }
   const federation = await builder.build({
     kv,
