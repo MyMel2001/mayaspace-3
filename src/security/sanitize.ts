@@ -65,14 +65,32 @@ export function sanitizePlain(raw: string): string {
 
 // ── Profile CSS sanitizer ────────────────────────────────────────────────────
 
-const SAFE_CSS_LENGTH = 10_000;
-
-const SAFE_URL_RE = /^https?:\/\//i;
-const CSS_COLOR_RE =
-  /^#[0-9a-f]{3,8}$|^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(,\s*(0|1|0?\.\d+)\s*)?\)$|^hsla?\(\s*\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%\s*(,\s*(0|1|0?\.\d+)\s*)?\)$/i;
-const CSS_NUMBER_RE = /^-?\d+(\.\d+)?(px|em|rem|%|pt|vw|vh|vmin|vmax|deg|s|ms|fr|)?$/i;
+const CSS_NUMBER_RE = /^-?(\d+(\.\d+)?|\.\d+)(px|em|rem|%|pt|vw|vh|vmin|vmax|deg|rad|turn|s|ms|fr)?$/i;
+const CSS_HEX_COLOR_RE = /^#[0-9a-f]{3,8}$/i;
 const CSS_KEYWORD_RE = /^[a-zA-Z-]{1,40}$/;
 const CSS_FONT_RE = /^[a-zA-Z0-9 ,.'"-]{1,120}$/;
+const SAFE_FUNC_RE = /^(rgba?|hsla?|linear-gradient|radial-gradient|repeating-linear-gradient|repeating-radial-gradient|url|var)$/i;
+
+const CSS_NAMED_COLORS = new Set([
+  "aliceblue", "antiquewhite", "aqua", "aquamarine", "azure", "beige", "bisque", "black", "blanchedalmond",
+  "blue", "blueviolet", "brown", "burlywood", "cadetblue", "chartreuse", "chocolate", "coral", "cornflowerblue",
+  "cornsilk", "crimson", "cyan", "darkblue", "darkcyan", "darkgoldenrod", "darkgray", "darkgreen", "darkgrey",
+  "darkkhaki", "darkmagenta", "darkolivegreen", "darkorange", "darkorchid", "darkred", "darksalmon", "darkseagreen",
+  "darkslateblue", "darkslategray", "darkslategrey", "darkturquoise", "darkviolet", "deeppink", "deepskyblue",
+  "dimgray", "dimgrey", "dodgerblue", "firebrick", "floralwhite", "forestgreen", "fuchsia", "gainsboro",
+  "ghostwhite", "gold", "goldenrod", "gray", "green", "greenyellow", "grey", "honeydew", "hotpink", "indianred",
+  "indigo", "ivory", "khaki", "lavender", "lavenderblush", "lawngreen", "lemonchiffon", "lightblue", "lightcoral",
+  "lightcyan", "lightgoldenrodyellow", "lightgray", "lightgreen", "lightgrey", "lightpink", "lightsalmon",
+  "lightseagreen", "lightskyblue", "lightslategray", "lightslategrey", "lightsteelblue", "lightyellow", "lime",
+  "limegreen", "linen", "magenta", "maroon", "mediumaquamarine", "mediumblue", "mediumorchid", "mediumpurple",
+  "mediumseagreen", "mediumslateblue", "mediumspringgreen", "mediumturquoise", "mediumvioletred", "midnightblue",
+  "mintcream", "mistyrose", "moccasin", "navajowhite", "navy", "oldlace", "olive", "olivedrab", "orange",
+  "orangered", "orchid", "palegoldenrod", "palegreen", "paleturquoise", "palevioletred", "papayawhip", "peachpuff",
+  "peru", "pink", "plum", "powderblue", "purple", "rebeccapurple", "red", "rosybrown", "royalblue", "saddlebrown",
+  "salmon", "sandybrown", "seagreen", "seashell", "sienna", "silver", "skyblue", "slateblue", "slategray",
+  "slategrey", "snow", "springgreen", "steelblue", "tan", "teal", "thistle", "tomato", "transparent", "turquoise",
+  "violet", "wheat", "white", "whitesmoke", "yellow", "yellowgreen",
+]);
 
 const CSS_PROP_ALLOWLIST = new Set([
   "background",
@@ -108,15 +126,20 @@ const CSS_PROP_ALLOWLIST = new Set([
   "border-width",
   "box-shadow",
   "color",
+  "cursor",
   "display",
+  "filter",
   "float",
   "font-family",
   "font-size",
   "font-style",
   "font-weight",
+  "gap",
   "height",
   "letter-spacing",
   "line-height",
+  "list-style",
+  "list-style-type",
   "margin",
   "margin-bottom",
   "margin-left",
@@ -139,56 +162,100 @@ const CSS_PROP_ALLOWLIST = new Set([
   "text-shadow",
   "text-transform",
   "width",
+  "z-index",
 ]);
 
 const CSS_VALUE_SAFE_KEYWORDS = new Set([
-  "auto", "none", "hidden", "scroll", "visible", "solid", "dashed", "dotted", "double",
-  "inherit", "initial", "unset", "transparent", "left", "right", "center", "justify",
-  "top", "bottom", "block", "inline", "inline-block", "flex", "nowrap", "bold",
-  "italic", "normal", "underline", "overline", "line-through", "uppercase",
-  "lowercase", "capitalize", "absolute", "relative", "static", "no-repeat",
-  "repeat", "repeat-x", "repeat-y", "cover", "contain", "serif", "sans-serif",
-  "monospace", "cursive", "fantasy",
+  ...CSS_NAMED_COLORS,
+  "auto", "none", "hidden", "scroll", "visible", "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset",
+  "inherit", "initial", "unset", "left", "right", "center", "justify",
+  "top", "bottom", "block", "inline", "inline-block", "flex", "inline-flex", "grid", "inline-grid", "nowrap", "bold", "bolder", "lighter",
+  "italic", "oblique", "normal", "underline", "overline", "line-through", "uppercase",
+  "lowercase", "capitalize", "absolute", "relative", "static", "sticky", "fixed", "no-repeat",
+  "repeat", "repeat-x", "repeat-y", "round", "space", "cover", "contain", "serif", "sans-serif",
+  "monospace", "cursive", "fantasy", "system-ui", "border-box", "content-box", "padding-box",
+  "small", "medium", "large", "smaller", "larger", "x-small", "xx-small", "x-large", "xx-large",
+  "pointer", "default", "crosshair", "move", "text", "wait", "help", "not-allowed",
+  "to", "from", "at", "circle", "ellipse", "closest-side", "closest-corner", "farthest-side", "farthest-corner",
 ]);
 
+function validateFunctionCall(funcName: string, inside: string): string | null {
+  const fn = funcName.toLowerCase();
+  if (!SAFE_FUNC_RE.test(fn)) return null;
+
+  if (fn === "url") {
+    const m = inside.trim().match(/^(['"]?)(https?:\/\/[^\s'")]+)\1$/i);
+    return m ? `url("${m[2]}")` : null;
+  }
+
+  if (fn === "var") {
+    const m = inside.trim().match(/^--[a-zA-Z0-9_-]+$/);
+    return m ? `var(${m[0]})` : null;
+  }
+
+  if (fn === "rgb" || fn === "rgba" || fn === "hsl" || fn === "hsla") {
+    const parts = inside.split(/[,/\s]+/).filter(Boolean);
+    for (const p of parts) {
+      if (p === "__SAFE__") continue;
+      if (!CSS_NUMBER_RE.test(p) && !CSS_HEX_COLOR_RE.test(p) && !CSS_VALUE_SAFE_KEYWORDS.has(p.toLowerCase())) {
+        return null;
+      }
+    }
+    return `${fn}(${inside.trim()})`;
+  }
+
+  if (fn.includes("gradient")) {
+    const stops = inside.split(",").map((s) => s.trim()).filter(Boolean);
+    if (stops.length === 0) return null;
+    for (const stop of stops) {
+      const tokens = stop.split(/\s+/).filter(Boolean);
+      for (const t of tokens) {
+        if (t === "__SAFE__") continue;
+        if (CSS_NUMBER_RE.test(t)) continue;
+        if (CSS_HEX_COLOR_RE.test(t)) continue;
+        if (CSS_VALUE_SAFE_KEYWORDS.has(t.toLowerCase())) continue;
+        return null;
+      }
+    }
+    return `${fn}(${inside.trim()})`;
+  }
+
+  return null;
+}
+
 /** Validates one CSS value token-by-token; returns null if anything is unsafe. */
+// ponytail: safe allowlist + regex token parser; replace with full CSS AST parser if complex modern syntax (calc/grid-template) needed.
 function validateCssValue(prop: string, rawValue: string): string | null {
   const value = rawValue.trim();
   if (value.length === 0 || value.length > 512) return null;
-  if (/[[\]{}();@\\<>"'*%]/.test(value)) return null; // structural chars: no url(), @rules, strings, comments, etc.
-  if (prop === "background-image") {
-    // only plain url(https://...) or linear-gradient with safe parts
-    const urlMatch = value.match(/^url\(\s*(["']?)(https?:\/\/[^)"']+)\1\s*\)$/i);
-    if (urlMatch) return `url("${urlMatch[2]}")`;
-    const gradMatch = value.match(/^(linear|radial)-gradient\((.+)\)$/i);
-    if (gradMatch) {
-      const inner = gradMatch[2]
-        .split(",")
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0 && t.length < 64 && !/[{};()<>@\\"]/.test(t));
-      if (inner.length > 0) return `${gradMatch[1].toLowerCase()}-gradient(${inner.join(", ")})`;
-    }
-    return null;
-  }
+  if (/[<>{};@\\]/.test(value)) return null;
+  if (/[\r\n]/.test(value)) return null;
+  if (/expression\s*\(|-moz-binding|behavior\s*:/i.test(value)) return null;
+
   if (prop === "font-family") {
     if (!CSS_FONT_RE.test(value)) return null;
     return value;
   }
-  // Split on whitespace and commas; every token must be number+unit, keyword, or color.
-  const tokens = value.split(/[\s,]+/).filter((t) => t !== "");
+
+  let processed = value;
+  for (let i = 0; i < 6; i++) {
+    const fnMatch = /([a-zA-Z-]+)\(([^()]*)\)/.exec(processed);
+    if (!fnMatch) break;
+    const [full, fnName, fnArgs] = fnMatch;
+    const validated = validateFunctionCall(fnName, fnArgs);
+    if (validated === null) return null;
+    processed = processed.replace(full, "__SAFE__");
+  }
+  if (/[()"'`]/.test(processed)) return null;
+
+  const tokens = processed.split(/[\s,]+/).filter(Boolean);
   for (const token of tokens) {
+    if (token === "__SAFE__") continue;
     const t = token.replace(/,$/, "");
     if (CSS_KEYWORD_RE.test(t) && CSS_VALUE_SAFE_KEYWORDS.has(t.toLowerCase())) continue;
     if (CSS_NUMBER_RE.test(t)) continue;
-    if (CSS_COLOR_RE.test(t)) continue;
-    // e.g. "rgb(255, 0, 0)" arrives as "rgb(255," etc. — validate the paren group as a whole
-    if (/^(rgb|rgba|hsl|hsla)\(/i.test(value)) {
-      if (CSS_COLOR_RE.test(value.replace(/\s+/g, " "))) break;
-    }
+    if (CSS_HEX_COLOR_RE.test(t)) continue;
     return null;
-  }
-  if (prop === "background" || prop === "background-image") {
-    if (SAFE_URL_RE.test(value) === false && value.includes("url(") === true) return null;
   }
   return value;
 }
@@ -212,7 +279,7 @@ export function sanitizeProfileCss(raw: string): string {
     const selector = m[1].trim();
     const body = m[2];
     // Selector sanity: no backslashes, angle brackets or at-rules.
-    if (selector === "" || /[@<>\\]/.test(selector) || selector.length > 200) continue;
+    if (selector === "" || /[@<\\]/.test(selector) || selector.length > 200) continue;
     // Keep only allowlisted, token-validated declarations, re-serialized.
     const decls: string[] = [];
     for (const statement of body.split(";")) {
@@ -221,7 +288,7 @@ export function sanitizeProfileCss(raw: string): string {
       const prop = statement.slice(0, colon).trim().toLowerCase();
       const value = statement.slice(colon + 1).trim();
       if (!CSS_PROP_ALLOWLIST.has(prop)) continue;
-      if (/[{}@<>\\]/.test(prop) || /[{}@<>\\]/.test(value)) continue;
+      if (/[{}@<\\]/.test(prop) || /[{}@<\\]/.test(value)) continue;
       const safe = validateCssValue(prop, value);
       if (safe === null) continue;
       decls.push(`${prop}: ${safe}`);
