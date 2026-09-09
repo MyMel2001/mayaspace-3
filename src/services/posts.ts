@@ -32,7 +32,14 @@ export async function createLocalPost(
   },
 ): Promise<CreatePostResult> {
   const text = rawText.trim();
-  if (text === "") return { ok: false, error: "Say something first!", mentionedHandles: [] };
+  const attachmentIds: string[] = [];
+  for (const attId of opts.attachmentIds?.slice(0, config.attachmentsPerPost) ?? []) {
+    const att = await store.getAttachment(attId);
+    if (att && att.uploadedBy === author.handle && att.postId === null) attachmentIds.push(attId);
+  }
+  if (text === "" && attachmentIds.length === 0) {
+    return { ok: false, error: "Say something or attach an image first!", mentionedHandles: [] };
+  }
   if (text.length > config.postMaxChars) {
     return {
       ok: false,
@@ -40,8 +47,8 @@ export async function createLocalPost(
       mentionedHandles: [],
     };
   }
-  const html = sanitizePostHtml(rawTextToHtml(text));
-  const mentionedHandles = extractLocalMentions(text);
+  const mentionedHandles = await resolveLocalMentions(extractLocalMentions(text));
+  const html = sanitizePostHtml(linkLocalMentions(rawTextToHtml(text), mentionedHandles));
 
   const post: PostRecord = {
     id: newId(),
@@ -61,15 +68,13 @@ export async function createLocalPost(
   };
   await store.createPost(post);
 
-  if (opts.attachmentIds && opts.attachmentIds.length > 0) {
-    const limited = opts.attachmentIds.slice(0, config.attachmentsPerPost);
-    for (const attId of limited) {
-      const att = await store.getAttachment(attId);
-      if (!att || att.uploadedBy !== author.handle || att.postId !== null) continue;
-      await store.updateAttachmentPost(attId, post.id);
+  if (attachmentIds.length > 0) {
+    const attachedIds: string[] = [];
+    for (const attId of attachmentIds) {
+      if (await store.updateAttachmentPost(attId, post.id)) attachedIds.push(attId);
     }
-    post.attachmentIds = limited;
-    await store.updatePost(post.id, { attachmentIds: limited });
+    post.attachmentIds = attachedIds;
+    await store.updatePost(post.id, { attachmentIds: attachedIds });
   }
 
   // Notify friends + mentioned users.
@@ -103,6 +108,15 @@ export async function createLocalPost(
 
   log.debug`Local post created by ${author.handle}: ${post.id}`;
   return { ok: true, post, mentionedHandles };
+}
+
+/** Turns verified local @mentions into profile links before HTML sanitization. */
+function linkLocalMentions(html: string, handles: string[]): string {
+  const mentioned = new Set(handles);
+  return html.replace(/@([a-z0-9_]{3,20})\b/gi, (whole, rawHandle: string) => {
+    const handle = rawHandle.toLowerCase();
+    return mentioned.has(handle) ? `<a href="/u/${handle}">${whole}</a>` : whole;
+  });
 }
 
 /** @mentions of LOCAL users — pattern: @handle with valid handle chars. */

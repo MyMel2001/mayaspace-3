@@ -8,7 +8,7 @@
       <h2 class="panel-title">What's on your mind?</h2>
       <form method="post" action="/posts" id="composer">
         <input type="hidden" name="csrf" value="<%= csrf %>">
-        <textarea name="body" id="composer-body" rows="4" maxlength="10000" placeholder="Post something… (@mention friends, paste YouTube links for auto-embeds)" required></textarea>
+        <textarea name="body" id="composer-body" rows="4" maxlength="10000" placeholder="Post something… (@mention friends, paste YouTube links for auto-embeds)"></textarea>
         <div class="composer-row">
           <label class="file-label">🖼 Attach
             <input type="file" name="files" id="composer-files" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" multiple>

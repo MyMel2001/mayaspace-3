@@ -27,6 +27,7 @@ import {
   Follow,
   Image,
   Like,
+  Mention,
   Note,
   Person,
   PUBLIC_COLLECTION,
@@ -167,10 +168,22 @@ const noteDispatcher = async (
   const author = await store.getUser(post.authorHandle);
   if (!author) return null;
 
+  const attachments = (await store.listAttachments(postId)).map(
+    (attachment) =>
+      new Image({
+        url: new URL(`${config.mayaUrl}/media/${attachment.filename}`),
+        mediaType: attachment.mime,
+        name: attachment.originalName,
+        width: attachment.width,
+        height: attachment.height,
+      }),
+  );
   return new Note({
     id: noteIdFor(postId),
     attribution: ctx.getActorUri(post.authorHandle),
     content: post.html,
+    attachments,
+    tags: await localMentionTags(post.textContent),
     published: toInstant(post.createdAt),
     to: PUBLIC_COLLECTION,
     url: new URL(`${config.mayaUrl}/post/${postId}`),
@@ -818,12 +831,35 @@ export async function sendUnfollow(
   return true;
 }
 
+async function localMentionTags(text: string): Promise<Mention[]> {
+  const handles = new Set<string>();
+  for (const match of text.matchAll(/@([a-z0-9_]{3,20})\b/gi)) {
+    const handle = match[1].toLowerCase();
+    if (await store.handleExists(handle)) handles.add(handle);
+  }
+  return [...handles].map(
+    (handle) => new Mention({ href: actorIdFor(handle), name: `@${handle}` }),
+  );
+}
+
 export async function sendCreateNote(ctx: Context<unknown>, post: PostRecord): Promise<void> {
   if (post.authorType !== "local" || post.visibility !== "public") return;
+  const attachments = (await store.listAttachments(post.id)).map(
+    (attachment) =>
+      new Image({
+        url: new URL(`${config.mayaUrl}/media/${attachment.filename}`),
+        mediaType: attachment.mime,
+        name: attachment.originalName,
+        width: attachment.width,
+        height: attachment.height,
+      }),
+  );
   const note = new Note({
     id: noteIdFor(post.id),
     attribution: ctx.getActorUri(post.authorHandle),
     content: post.html,
+    attachments,
+    tags: await localMentionTags(post.textContent),
     published: toInstant(post.createdAt),
     to: PUBLIC_COLLECTION,
   });

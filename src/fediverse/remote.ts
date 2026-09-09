@@ -143,6 +143,15 @@ async function stubActorFromWebFinger(ref: string): Promise<RemoteActorRecord | 
  * Fetches and caches a remote actor by IRI (or resolves "user@host" handles
  * through WebFinger + the document loader). Returns null when unresolvable.
  */
+async function lookupAsServiceActor(ctx: Context<unknown>, ref: string | URL): Promise<vocab.Object | null> {
+  // Contexts created for background work have no sender/recipient identity, so
+  // ctx.lookupObject() uses its unsigned default loader.  Authorized-fetch
+  // servers reject that loader with 401.  Select service actor key explicitly.
+  return ctx.lookupObject(ref, {
+    documentLoader: await ctx.getDocumentLoader({ identifier: SERVICE_ACTOR_HANDLE }),
+  });
+}
+
 export async function resolveRemoteActor(
   ctx: Context<unknown>,
   ref: string,
@@ -151,9 +160,7 @@ export async function resolveRemoteActor(
   if (ref.includes("@") && !ref.startsWith("http")) {
     const handleForm = ref.replace(/^@+/, "");
     try {
-      // The federation's signed documentLoaderFactory (federation.ts) already
-      // signs lookups with the service actor key — no override needed here.
-      const doc = await ctx.lookupObject(`acct:${handleForm}`);
+      const doc = await lookupAsServiceActor(ctx, `acct:${handleForm}`);
       if (doc !== null && isActorLike(doc) && doc.id !== null) {
         return await upsertRemoteActorFromPerson(doc.id, doc);
       }
@@ -180,7 +187,7 @@ export async function refreshRemoteActor(
   actorId: string,
 ): Promise<RemoteActorRecord | null> {
   try {
-    const doc = await ctx.lookupObject(new URL(actorId));
+    const doc = await lookupAsServiceActor(ctx, new URL(actorId));
     if (doc !== null && isActorLike(doc) && doc.id !== null) {
       return await upsertRemoteActorFromPerson(doc.id, doc);
     }
