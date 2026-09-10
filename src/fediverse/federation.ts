@@ -40,7 +40,7 @@ import {
 import { config } from "../config.js";
 import { appLog } from "../logger.js";
 import { store, Store } from "../store.js";
-import type { FediverseFollowRecord, PostRecord, RemoteActorRecord } from "../types.js";
+import type { CommentRecord, FediverseFollowRecord, PostRecord, RemoteActorRecord } from "../types.js";
 import { isoNow, newId, parseHttpUrl, stripHtml } from "../util.js";
 import { sanitizePostHtml } from "../security/sanitize.js";
 import { getActorKeyPairs } from "./keys.js";
@@ -65,6 +65,10 @@ export function actorHandleFromIri(iri: string): string | null {
 
 export function noteIdFor(postId: string): URL {
   return new URL(`${config.mayaUrl}/posts/${encodeURIComponent(postId)}`);
+}
+
+export function commentIdFor(commentId: string): URL {
+  return new URL(`${config.mayaUrl}/comments/${encodeURIComponent(commentId)}`);
 }
 
 function toInstant(iso: string): Temporal.Instant {
@@ -840,6 +844,40 @@ async function localMentionTags(text: string): Promise<Mention[]> {
   return [...handles].map(
     (handle) => new Mention({ href: actorIdFor(handle), name: `@${handle}` }),
   );
+}
+
+/**
+ * Fans a local comment out as Create(Note) with inReplyTo set to the parent
+ * post's note IRI, so Mastodon-style threads pick it up as a reply. Remote
+ * Create listener already stores these (it mirrors any Create(Note) whose
+ * object has a resolvable apId). Comments on friends-only posts stay local.
+ */
+export async function sendCreateComment(
+  ctx: Context<unknown>,
+  post: PostRecord,
+  comment: CommentRecord,
+): Promise<void> {
+  if (comment.authorType !== "local" || post.visibility !== "public") return;
+  const note = new Note({
+    id: commentIdFor(comment.id),
+    attribution: ctx.getActorUri(comment.authorHandle),
+    content: comment.html,
+    replyTarget: noteIdFor(post.id),
+    published: toInstant(comment.createdAt),
+    to: PUBLIC_COLLECTION,
+  });
+  const create = new Create({
+    id: new URL(`${config.mayaUrl}/activities/${newId()}`),
+    actor: ctx.getActorUri(comment.authorHandle),
+    object: note,
+    to: PUBLIC_COLLECTION,
+  });
+  try {
+    await ctx.sendActivity({ identifier: comment.authorHandle }, "followers", create);
+    log.debug`Create(comment Note) fanned out for ${comment.id}`;
+  } catch (err) {
+    log.warn`Comment fan-out for ${comment.id} failed: ${err}`;
+  }
 }
 
 export async function sendCreateNote(ctx: Context<unknown>, post: PostRecord): Promise<void> {

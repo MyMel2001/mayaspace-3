@@ -69,7 +69,7 @@ const CSS_NUMBER_RE = /^-?(\d+(\.\d+)?|\.\d+)(px|em|rem|%|pt|vw|vh|vmin|vmax|deg
 const CSS_HEX_COLOR_RE = /^#[0-9a-f]{3,8}$/i;
 const CSS_KEYWORD_RE = /^[a-zA-Z-]{1,40}$/;
 const CSS_FONT_RE = /^[a-zA-Z0-9 ,.'"-]{1,120}$/;
-const SAFE_FUNC_RE = /^(rgba?|hsla?|linear-gradient|radial-gradient|repeating-linear-gradient|repeating-radial-gradient|url|var)$/i;
+const SAFE_FUNC_RE = /^(rgba?|hsla?|linear-gradient|radial-gradient|repeating-linear-gradient|repeating-radial-gradient|url|var|calc|rotate|scale|scale[xy]|translate|translate[xy]|skew[xy]?|blur|brightness|contrast|grayscale|hue-rotate|invert|opacity|saturate|sepia)$/i;
 
 const CSS_NAMED_COLORS = new Set([
   "aliceblue", "antiquewhite", "aqua", "aquamarine", "azure", "beige", "bisque", "black", "blanchedalmond",
@@ -93,9 +93,16 @@ const CSS_NAMED_COLORS = new Set([
 ]);
 
 const CSS_PROP_ALLOWLIST = new Set([
+  "align-content",
+  "align-items",
+  "align-self",
+  "backdrop-filter",
   "background",
+  "background-attachment",
+  "background-clip",
   "background-color",
   "background-image",
+  "background-origin",
   "background-position",
   "background-repeat",
   "background-size",
@@ -106,6 +113,7 @@ const CSS_PROP_ALLOWLIST = new Set([
   "border-bottom-right-radius",
   "border-bottom-style",
   "border-bottom-width",
+  "border-collapse",
   "border-color",
   "border-left",
   "border-left-color",
@@ -116,6 +124,7 @@ const CSS_PROP_ALLOWLIST = new Set([
   "border-right-color",
   "border-right-style",
   "border-right-width",
+  "border-spacing",
   "border-style",
   "border-top",
   "border-top-color",
@@ -124,21 +133,56 @@ const CSS_PROP_ALLOWLIST = new Set([
   "border-top-style",
   "border-top-width",
   "border-width",
+  "bottom",
   "box-shadow",
+  "box-sizing",
+  "clip-path",
   "color",
+  "column-gap",
   "cursor",
   "display",
   "filter",
+  "flex",
+  "flex-basis",
+  "flex-direction",
+  "flex-flow",
+  "flex-grow",
+  "flex-shrink",
+  "flex-wrap",
   "float",
   "font-family",
   "font-size",
   "font-style",
   "font-weight",
   "gap",
+  "grid",
+  "grid-area",
+  "grid-auto-columns",
+  "grid-auto-flow",
+  "grid-auto-rows",
+  "grid-column",
+  "grid-column-end",
+  "grid-column-gap",
+  "grid-column-start",
+  "grid-gap",
+  "grid-row",
+  "grid-row-end",
+  "grid-row-gap",
+  "grid-row-start",
+  "grid-template",
+  "grid-template-areas",
+  "grid-template-columns",
+  "grid-template-rows",
   "height",
+  "justify-content",
+  "justify-items",
+  "justify-self",
+  "left",
   "letter-spacing",
   "line-height",
   "list-style",
+  "list-style-image",
+  "list-style-position",
   "list-style-type",
   "margin",
   "margin-bottom",
@@ -149,34 +193,58 @@ const CSS_PROP_ALLOWLIST = new Set([
   "max-width",
   "min-height",
   "min-width",
+  "object-fit",
+  "object-position",
   "opacity",
   "outline",
   "overflow",
+  "overflow-wrap",
+  "overflow-x",
+  "overflow-y",
   "padding",
   "padding-bottom",
   "padding-left",
   "padding-right",
   "padding-top",
+  "pointer-events",
+  "position",
+  "right",
+  "row-gap",
+  "table-layout",
   "text-align",
   "text-decoration",
+  "text-overflow",
   "text-shadow",
   "text-transform",
+  "top",
+  "transform",
+  "transform-origin",
+  "transition",
+  "user-select",
+  "vertical-align",
+  "white-space",
   "width",
+  "word-break",
+  "word-spacing",
+  "word-wrap",
   "z-index",
 ]);
 
 const CSS_VALUE_SAFE_KEYWORDS = new Set([
   ...CSS_NAMED_COLORS,
-  "auto", "none", "hidden", "scroll", "visible", "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset",
-  "inherit", "initial", "unset", "left", "right", "center", "justify",
+  "all", "auto", "none", "hidden", "scroll", "visible", "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset",
+  "inherit", "initial", "unset", "left", "right", "center", "justify", "start", "end",
   "top", "bottom", "block", "inline", "inline-block", "flex", "inline-flex", "grid", "inline-grid", "nowrap", "bold", "bolder", "lighter",
   "italic", "oblique", "normal", "underline", "overline", "line-through", "uppercase",
   "lowercase", "capitalize", "absolute", "relative", "static", "sticky", "fixed", "no-repeat",
-  "repeat", "repeat-x", "repeat-y", "round", "space", "cover", "contain", "serif", "sans-serif",
+  "repeat", "repeat-x", "repeat-y", "round", "space", "cover", "contain", "fill", "scale-down", "serif", "sans-serif",
   "monospace", "cursive", "fantasy", "system-ui", "border-box", "content-box", "padding-box",
   "small", "medium", "large", "smaller", "larger", "x-small", "xx-small", "x-large", "xx-large",
-  "pointer", "default", "crosshair", "move", "text", "wait", "help", "not-allowed",
+  "pointer", "default", "crosshair", "move", "text", "wait", "help", "not-allowed", "zoom-in", "zoom-out", "grab", "grabbing",
   "to", "from", "at", "circle", "ellipse", "closest-side", "closest-corner", "farthest-side", "farthest-corner",
+  "row", "row-reverse", "column", "column-reverse", "wrap", "wrap-reverse", "space-between", "space-around", "space-evenly", "stretch", "baseline",
+  "collapse", "separate", "break-word", "break-all", "keep-all", "pre", "pre-wrap", "pre-line", "ellipsis", "clip",
+  "ease", "ease-in", "ease-out", "ease-in-out", "linear", "step-start", "step-end",
 ]);
 
 function validateFunctionCall(funcName: string, inside: string): string | null {
@@ -220,25 +288,35 @@ function validateFunctionCall(funcName: string, inside: string): string | null {
     return `${fn}(${inside.trim()})`;
   }
 
-  return null;
+  const parts = inside.split(/[,/\s+*-]+/).filter(Boolean);
+  for (const p of parts) {
+    if (p === "__SAFE__") continue;
+    if (!CSS_NUMBER_RE.test(p) && !CSS_HEX_COLOR_RE.test(p) && !CSS_VALUE_SAFE_KEYWORDS.has(p.toLowerCase())) {
+      return null;
+    }
+  }
+  return `${fn}(${inside.trim()})`;
 }
 
-/** Validates one CSS value token-by-token; returns null if anything is unsafe. */
 // ponytail: safe allowlist + regex token parser; replace with full CSS AST parser if complex modern syntax (calc/grid-template) needed.
 function validateCssValue(prop: string, rawValue: string): string | null {
-  const value = rawValue.trim();
+  let value = rawValue.replace(/\s+/g, " ").trim();
   if (value.length === 0 || value.length > 512) return null;
   if (/[<>{};@\\]/.test(value)) return null;
-  if (/[\r\n]/.test(value)) return null;
   if (/expression\s*\(|-moz-binding|behavior\s*:/i.test(value)) return null;
+
+  const isImportant = /\s*!\s*important\s*$/i.test(value);
+  if (isImportant) {
+    value = value.replace(/\s*!\s*important\s*$/i, "").trim();
+  }
 
   if (prop === "font-family") {
     if (!CSS_FONT_RE.test(value)) return null;
-    return value;
+    return isImportant ? `${value} !important` : value;
   }
 
   let processed = value;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     const fnMatch = /([a-zA-Z-]+)\(([^()]*)\)/.exec(processed);
     if (!fnMatch) break;
     const [full, fnName, fnArgs] = fnMatch;
@@ -257,7 +335,7 @@ function validateCssValue(prop: string, rawValue: string): string | null {
     if (CSS_HEX_COLOR_RE.test(t)) continue;
     return null;
   }
-  return value;
+  return isImportant ? `${value} !important` : value;
 }
 
 /**
@@ -276,7 +354,7 @@ export function sanitizeProfileCss(raw: string): string {
   const ruleRe = /([^{}]*)\{([^{}]*)\}/g;
   let m: RegExpExecArray | null;
   while ((m = ruleRe.exec(stripped)) !== null) {
-    const selector = m[1].trim();
+    const selector = m[1].replace(/\s+/g, " ").trim();
     const body = m[2];
     // Selector sanity: no backslashes, angle brackets or at-rules.
     if (selector === "" || /[@<\\]/.test(selector) || selector.length > 200) continue;

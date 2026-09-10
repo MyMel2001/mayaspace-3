@@ -12,7 +12,7 @@ import {
   deletePost,
 } from "../../services/posts.js";
 import { processUpload } from "../../services/attachments.js";
-import { sendCreateNote, sendDeleteNote, sendRemoteLike } from "../../fediverse/federation.js";
+import { sendCreateComment, sendCreateNote, sendDeleteNote, sendRemoteLike } from "../../fediverse/federation.js";
 import { getFederation } from "../../app.js";
 import { attachmentsUpload } from "../upload.js";
 import { csrfGuard, postLimiter, requireLogin, uploadLimiter } from "../../security/auth.js";
@@ -84,11 +84,31 @@ router.post(
   async (req: Request, res: Response) => {
     const body = req.body as Record<string, unknown>;
     const text = typeof body.body === "string" ? body.body : "";
-    const result = await createLocalComment(req.user!, String(req.params.id), text);
+    const postId = String(req.params.id);
+    const post = await store.getPost(postId);
+    const result = await createLocalComment(req.user!, postId, text);
     if (!result.ok) {
       flash(req, "error", result.error ?? "Couldn't comment.");
+    } else if (post && !post.deleted) {
+      // Fan the comment out to remote followers in the background.
+      const federation = getFederation();
+      if (federation) {
+        void sendCreateComment(federation, post, {
+          id: result.comment!.id,
+          postId,
+          authorHandle: req.user!.handle,
+          authorType: "local",
+          remoteActorId: null,
+          apId: null,
+          html: result.comment!.html,
+          createdAt: result.comment!.createdAt,
+          deleted: false,
+        }).catch((err) => {
+          console.error("[posts] comment fan-out failed:", err);
+        });
+      }
     }
-    res.redirect(`/post/${String(req.params.id)}`);
+    res.redirect(`/post/${postId}`);
   },
 );
 
